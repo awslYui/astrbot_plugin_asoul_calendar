@@ -1,154 +1,99 @@
-import os
-import sys
-import subprocess
-
-# --- 自动修复依赖冲突的逻辑 ---
-try:
-    import tatsu
-    # 检查 tatsu 版本
-    if hasattr(tatsu, '__version__') and not tatsu.__version__.startswith('5.7'):
-        raise ImportError("Tatsu version mismatch")
-except (ImportError, ValueError):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "tatsu==5.7.3", "ics==0.7.2", "--force-reinstall"])
-# ---------------------------
-import arrow
 import httpx
-from ics import Calendar
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime, timedelta
-import os
+import os, re
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api.all import *
 
-@register("asoul_calendar", "A-SOUL 直播日程排版插件", "1.1.0")
+@register("asoul_calendar", "awslYui", "A-SOUL 直播日程, "1.0")
 class CalendarPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
         self.url = "https://asoul.love/calendar.ics"
         self.image_path = "data/asoul_schedule.png"
+        self.font_path = "MiSans-Regular.ttf" # 确保仓库里有这个字体
         
-        # 字体文件路径 (必须是支持中文的 .ttf 或 .ttc 文件)
-      
-        self.font_path = "msyh.ttf" 
-        
-        # 注册定时任务：每 12 小时更新一次
         @self.context.register_task("0 */12 * * *")
         async def scheduled_update():
             await self.update_calendar_image()
 
-    def get_member_color(self, event_name: str) -> str:
-        """根据日程标题包含的成员名字，返回对应的背景颜色"""
-        if "嘉然" in event_name:
-            return "#E799B0"
-        elif "贝拉" in event_name:
-            return "#DB7D74"
-        elif "乃琳" in event_name:
-            return "#576690"
-        elif "思诺" in event_name:
-            return "#7252C0"
-        elif "心宜" in event_name:
-            return "#C93773"
-        else:
-            return "#555555" # 如果是团播或未指明，使用低调的深灰色
+    def parse_ics_simple(self, text):
+        """手动解析 ICS 文本，避开第三方库 Bug"""
+        events = []
+        # 使用正则匹配事件块
+        items = re.findall(r"BEGIN:VEVENT.*?END:VEVENT", text, re.S)
+        for item in items:
+            summary = re.search(r"SUMMARY:(.*)", item)
+            dtstart = re.search(r"DTSTART:(.*)", item)
+            if summary and dtstart:
+                title = summary.group(1).strip()
+                time_str = dtstart.group(1).strip()
+                # 格式通常是 20260411T120000Z
+                try:
+                    utc_dt = datetime.strptime(time_str, "%Y%m%dT%H%M%SZ")
+                    bj_dt = utc_dt + timedelta(hours=8) # 转换为北京时间
+                    events.append((bj_dt, title))
+                except:
+                    continue
+        return sorted(events, key=lambda x: x[0])
+
+    def get_member_color(self, name):
+        colors = {"嘉然": "#E799B0", "贝拉": "#DB7D74", "乃琳": "#576690", "思诺": "#7252C0", "心宜": "#C93773"}
+        for k, v in colors.items():
+            if k in name: return v
+        return "#555555"
 
     async def update_calendar_image(self):
-        """下载 ics 并生成类似 B 站动态排版的图片"""
         async with httpx.AsyncClient() as client:
             try:
                 resp = await client.get(self.url)
-                if resp.status_code != 200:
-                    return False
-            except Exception:
+                all_events = self.parse_ics_simple(resp.text)
+            except:
                 return False
             
-            calendar = Calendar(resp.text)
-            
-            # 筛选未来 7 天的日程
             now = datetime.now()
-            upcoming_events = []
-            for event in sorted(calendar.events):
-                # 将 UTC 时间转换为北京时间用于比较
-                bj_time = event.begin.to('Asia/Shanghai')
-                if now <= bj_time.datetime.replace(tzinfo=None) <= now + timedelta(days=7):
-                    upcoming_events.append((bj_time, event.name))
-            
-            # 如果没有日程，生成一张默认图
-            if not upcoming_events:
-                upcoming_events.append((datetime.now(), "本周暂无已公开的直播安排"))
+            upcoming = [e for e in all_events if now <= e[0] <= now + timedelta(days=7)]
+            if not upcoming: upcoming = [(now, "本周暂无公开日程")]
 
-            # B 站动态风格 UI 设置
-            card_width = 700
-            card_height = 90
-            padding = 20
-            margin_top = 100
-            
-            # 动态计算整个图片的画布高度
-            img_height = margin_top + len(upcoming_events) * (card_height + padding) + 50
-            img_width = card_width + 80
-            
-            # 创建画布：B 站深色模式背景 #1C1C1E 或浅色模式的温和底色
-            # 这里用一个非常淡的灰色作为底板，让彩色的卡片更突出
-            img = Image.new('RGB', (img_width, img_height), color="#F4F5F7")
+            # 绘图逻辑 (保持之前的 B 站风格)
+            card_h, pad, margin_t = 90, 20, 100
+            img_h = margin_t + len(upcoming) * (card_h + pad) + 50
+            img = Image.new('RGB', (780, img_h), color="#F4F5F7")
             draw = ImageDraw.Draw(img)
             
-            # 加载字体
             try:
-                title_font = ImageFont.truetype(self.font_path, 36)
-                main_font = ImageFont.truetype(self.font_path, 28)
-                time_font = ImageFont.truetype(self.font_path, 24)
-            except IOError:
-                # 如果找不到字体，使用默认字体 (警告：默认字体无法显示中文)
-                title_font = ImageFont.load_default()
-                main_font = title_font
-                time_font = title_font
+                font_title = ImageFont.truetype(self.font_path, 36)
+                font_main = ImageFont.truetype(self.font_path, 28)
+                font_time = ImageFont.truetype(self.font_path, 24)
+            except:
+                return False # 字体缺失也会导致失败
 
-            # 绘制大标题
-            draw.text((40, 30), "A-SOUL 本周直播日程", fill="#222222", font=title_font)
+            draw.text((40, 30), "A-SOUL 本周直播日程", fill="#222222", font=font_title)
             
-            y_offset = margin_top
-            for bj_time, event_name in upcoming_events:
-                # 提取格式化时间，例如：04月15日 20:00
-                time_str = bj_time.format('MM月DD日 HH:mm')
-                if "暂无" in event_name:
-                    time_str = "提示"
-                
-                # 获取该日程的背景色
-                bg_color = self.get_member_color(event_name)
-                
-                # 绘制日程卡片 (带有圆角的矩形)
-                x0, y0 = 40, y_offset
-                x1, y1 = 40 + card_width, y_offset + card_height
-                draw.rounded_rectangle([x0, y0, x1, y1], radius=15, fill=bg_color)
-                
-                # 在色块内绘制文字：全部要求为白色
-                # 时间绘制在左侧
-                draw.text((x0 + 25, y0 + 30), time_str, fill="#FFFFFF", font=time_font)
-                
-                # 内容标题绘制在右侧一点的位置，用一条简单的竖线分割视觉
-                draw.text((x0 + 220, y0 + 25), f"|  {event_name}", fill="#FFFFFF", font=main_font)
-                
-                y_offset += card_height + padding
+            y = margin_t
+            for bj_dt, title in upcoming:
+                color = self.get_member_color(title)
+                draw.rounded_rectangle([40, y, 740, y + card_h], radius=15, fill=color)
+                draw.text((65, y + 30), bj_dt.strftime('%m月%d日 %H:%M'), fill="#FFFFFF", font=font_time)
+                draw.text((260, y + 25), f"|  {title}", fill="#FFFFFF", font=font_main)
+                y += card_h + pad
             
-            # 确保 data 目录存在
-            os.makedirs(os.path.dirname(self.image_path), exist_ok=True)
+            os.makedirs("data", exist_ok=True)
             img.save(self.image_path)
             return True
 
     @filter.command("日程表")
     async def send_calendar(self, event: AstrMessageEvent):
-        """指令 1: 发送现有的日程图片"""
         if os.path.exists(self.image_path):
             yield event.image_result(self.image_path)
         else:
-            yield event.plain_result("暂无日程图片，请执行 /更新日程表 同步最新数据哦。")
+            yield event.plain_result("暂无日程图片，请执行 /更新日程表")
 
     @filter.command("更新日程表")
     async def force_update(self, event: AstrMessageEvent):
-        """指令 2: 立即更新并发送"""
-        yield event.plain_result("正在拉取最新日历并努力排版中，请稍候...")
-        success = await self.update_calendar_image()
-        if success:
+        yield event.plain_result("正在同步日历...")
+        if await self.update_calendar_image():
             yield event.image_result(self.image_path)
         else:
-            yield event.plain_result("更新失败了，请检查网络或日历源是否正常。")
+            yield event.plain_result("更新失败，请检查字体文件或网络。")
