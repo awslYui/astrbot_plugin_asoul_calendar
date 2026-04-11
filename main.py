@@ -8,12 +8,18 @@ from astrbot.api.all import *
 
 @register("asoul_calendar", "awslYui", "枝江直播日程", "1.0")
 class CalendarPlugin(Star):
-    def __init__(self, context: Context):
+     def __init__(self, context: Context):
         super().__init__(context)
         self.url = "https://asoul.love/calendar.ics"
         self.image_path = "data/asoul_schedule.png"
-        self.font_path = os.path.join(os.path.dirname(__file__), "msyh.ttf")
-        self.context.register_task("0 */12 * * *", self.update_calendar_image, desc="A-SOUL 日程表定时更新")
+        self.font_path = os.path.join(os.path.dirname(__file__), "MiSans-Regular.ttf")
+        
+        # 显式指定每一个参数的名字，防止错位
+        self.context.register_task(
+            cron="0 */12 * * *", 
+            func=self.update_calendar_image, 
+            desc="A-SOUL 日程表定时更新"
+        )
 
     def parse_ics_advanced(self, text):
         """增强版解析：支持直播间链接识别和状态识别"""
