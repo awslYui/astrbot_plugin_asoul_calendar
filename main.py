@@ -1,4 +1,5 @@
 import httpx
+import json
 from PIL import Image as PILImage, ImageDraw, ImageFont
 from datetime import datetime, timedelta
 import os, re
@@ -12,6 +13,7 @@ class CalendarPlugin(Star):
         super().__init__(context)
         self.url = "https://asoul.love/calendar.ics"
         self.image_path = "data/asoul_schedule.png"
+        self.cache_path = "data/asoul_events_cache.json" # 新增：本地缓存路径 
         self.font_path = os.path.join(os.path.dirname(__file__), "msyh.ttf")
         
         try:
@@ -30,33 +32,46 @@ class CalendarPlugin(Star):
             found_name = name_part.replace("突击", "").replace("日常", "").strip()
         return found_tag, found_name, found_title
 
-    def parse_ics_advanced(self, text):
-        events = []
+    def parse_ics_to_dict(self, text):
+        """将 ICS 解析为字典列表，方便合并和序列化 """
+        events_dict = {}
         items = re.findall(r"BEGIN:VEVENT.*?END:VEVENT", text, re.S)
         for item in items:
+            uid = re.search(r"UID:(.*)", item).group(1).strip() if re.search(r"UID:(.*)", item) else ""
             summary = re.search(r"SUMMARY:(.*)", item).group(1).strip() if re.search(r"SUMMARY:(.*)", item) else ""
             dtstart = re.search(r"DTSTART:(.*)", item).group(1).strip() if re.search(r"DTSTART:(.*)", item) else ""
-            location = re.search(r"URL:(.*)", item).group(1).strip() if re.search(r"URL:(.*)", item) else ""
-            if not dtstart: continue
+            url = re.search(r"URL:(.*)", item).group(1).strip() if re.search(r"URL:(.*)", item) else ""
+            
+            if not dtstart or not uid: continue
             
             tag, name, title = self.parse_summary_v3(summary)
             try:
                 t_str = dtstart[:16].replace('Z','')
+                # 统一转为时间戳存储
                 bj_dt = datetime.strptime(t_str, "%Y%m%dT%H%M%S") + timedelta(hours=8)
-                events.append({
-                    "time": bj_dt, "tag": tag, "name": name, 
-                    "title": title, "url": location, "canceled": False
-                })
+                events_dict[uid] = {
+                    "uid": uid,
+                    "time": bj_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                    "tag": tag,
+                    "name": name,
+                    "title": title,
+                    "url": url
+                }
             except: continue
-        
-        sorted_ev = sorted(events, key=lambda x: x["time"])
-        for i in range(len(sorted_ev)):
-            for j in range(i + 1, len(sorted_ev)):
-                if sorted_ev[i]["title"] == sorted_ev[j]["title"] and \
-                   sorted_ev[i]["time"].date() == sorted_ev[j]["time"].date():
-                    sorted_ev[i]["canceled"] = True
-                    
-        return sorted_ev
+        return events_dict
+
+    def load_cached_events(self):
+        """加载本地存储的历史日程 """
+        if os.path.exists(self.cache_path):
+            with open(self.cache_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return {}
+
+    def save_events(self, events):
+        """保存合并后的日程 """
+        os.makedirs("data", exist_ok=True)
+        with open(self.cache_path, 'w', encoding='utf-8') as f:
+            json.dump(events, f, ensure_ascii=False, indent=2)
 
     def get_color(self, url, name):
         mapping = {
@@ -68,17 +83,19 @@ class CalendarPlugin(Star):
         return "#5C6370"
 
     def draw_card(self, draw, base_img, x, y, ev, fonts):
-        COL_W = 240 # 缩小卡片宽度
+        COL_W = 240
         draw.line([x - 15, y + 10, x - 15, y + 180], fill="#DCDFE6", width=2)
-        draw.text((x, y), ev["time"].strftime('%H:%M'), fill="#99A2AA", font=fonts['time'])
+        draw.text((x, y), datetime.strptime(ev["time"], "%Y-%m-%d %H:%M:%S").strftime('%H:%M'), fill="#99A2AA", font=fonts['time'])
         
         title = ev["title"]
         if len(title) > 33: title = title[:32] + "..."
-        lines = [title[i:i+9] for i in range(0, len(title), 9)][:3] # 缩宽后每行字数减少
+        lines = [title[i:i+9] for i in range(0, len(title), 9)][:3]
         
         card_h = 85 + (len(lines) - 1) * 25
         y_c = y + 35
-        m_clr = "#E0E0E0" if ev["canceled"] else self.get_color(ev["url"], ev["name"])
+        # 判定划线逻辑 
+        is_canceled = ev.get("canceled", False)
+        m_clr = "#E0E0E0" if is_canceled else self.get_color(ev["url"], ev["name"])
         draw.rounded_rectangle([x, y_c, x + COL_W - 30, y_c + card_h], radius=15, fill=m_clr)
         
         tag_canvas = PILImage.new('RGBA', base_img.size, (255, 255, 255, 0))
@@ -88,43 +105,62 @@ class CalendarPlugin(Star):
         
         draw.text((x + 18, y_c + 18), ev["tag"], fill="#FFFFFF", font=fonts['tag'])
         draw.text((x + 75, y_c + 16), ev["name"], fill="#FFFFFF", font=fonts['name'])
-        
         for i, line in enumerate(lines):
             draw.text((x + 10, y_c + 50 + i * 25), line, fill="#FFFFFF", font=fonts['title'])
             
-        if ev["canceled"]:
+        if is_canceled:
             line_y_mid = y_c + card_h // 2
             draw.line([x + 10, line_y_mid, x + COL_W - 40, line_y_mid], fill="#444444", width=3)
-        return card_h + 55 # 紧凑型间距
+        return card_h + 55
 
     async def update_calendar_image(self):
         async with httpx.AsyncClient() as client:
             try:
+                # 1. 下载并合并日程 
                 resp = await client.get(self.url, timeout=10)
-                all_ev = self.parse_ics_advanced(resp.text)
-            except: return False
+                new_events = self.parse_ics_to_dict(resp.text)
+                all_events = self.load_cached_events()
+                
+                # 合并逻辑：新下载的会覆盖旧的 UID，但旧的 UID 如果新下载里没有则保留 
+                all_events.update(new_events)
+                self.save_events(all_events)
+                
+                # 2. 转换为渲染列表并处理“重复划线”逻辑 
+                render_list = list(all_events.values())
+                render_list.sort(key=lambda x: x["time"])
+                
+                # 标记同天重复标题 
+                for i in range(len(render_list)):
+                    render_list[i]["canceled"] = False
+                    for j in range(i + 1, len(render_list)):
+                        if render_list[i]["title"] == render_list[j]["title"] and \
+                           render_list[i]["time"][:10] == render_list[j]["time"][:10]:
+                            render_list[i]["canceled"] = True
+            except Exception as e:
+                print(f"Error: {e}")
+                return False
             
+            # 3. 筛选本周数据
             today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             start_w = today - timedelta(days=today.weekday())
             w_data = {i: [] for i in range(7)}
-            for e in all_ev:
-                diff = (e["time"].date() - start_w.date()).days
-                if 0 <= diff <= 6: w_data[diff].append(e)
+            for e in render_list:
+                ev_dt = datetime.strptime(e["time"], "%Y-%m-%d %H:%M:%S")
+                diff = (ev_dt.date() - start_w.date()).days
+                if 0 <= diff <= 6:
+                    w_data[diff].append(e)
 
-            # --- 动态高度计算核心逻辑 ---
-            CW, MT = 260, 180 # 减小列宽
+            # 4. 动态高度计算
+            CW, MT = 260, 180
             day_heights = []
             for i in range(7):
-                day_y = 0
+                h = 0
                 for ev in w_data[i]:
-                    title = ev["title"]
-                    lines_count = len([title[k:k+9] for k in range(0, len(title), 9)][:3])
-                    day_y += (85 + (lines_count - 1) * 25 + 55)
-                day_heights.append(day_y)
+                    lines = len([ev["title"][k:k+9] for k in range(0, len(ev["title"]), 9)][:3])
+                    h += (85 + (lines - 1) * 25 + 55)
+                day_heights.append(h)
             
-            actual_max_h = max(day_heights) if day_heights else 100
-            img_h = MT + actual_max_h + 60 # 动态画布高度
-            
+            img_h = MT + (max(day_heights) if day_heights else 100) + 60
             img = PILImage.new('RGB', (CW * 7 + 80, int(img_h)), color="#F4F5F7")
             draw = ImageDraw.Draw(img)
             
@@ -151,7 +187,6 @@ class CalendarPlugin(Star):
                 for ev in w_data[i]:
                     y_o += self.draw_card(draw, img, x, y_o, ev, fonts)
             
-            os.makedirs("data", exist_ok=True)
             img.save(self.image_path)
             return True
 
@@ -164,4 +199,4 @@ class CalendarPlugin(Star):
     async def force_update(self, event: AstrMessageEvent):
         yield event.plain_result("正在更新日程表...")
         if await self.update_calendar_image(): yield event.image_result(self.image_path)
-        else: yield event.plain_result("同步失败。")
+        else: yield event.plain_result("更新失败。")
