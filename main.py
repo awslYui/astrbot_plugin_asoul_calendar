@@ -7,13 +7,13 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api.all import *
 
-@register("asoul_calendar", "awslYui", "A-SOUL 日程", "1.0")
+@register("asoul_calendar", "awslYui", "A-SOUL 日程 ", "1.0")
 class CalendarPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
         self.url = "https://asoul.love/calendar.ics"
         self.image_path = "data/asoul_schedule.png"
-        self.cache_path = "data/asoul_events_cache.json" # 新增：本地缓存路径 
+        self.cache_path = "data/asoul_events_cache.json"
         self.font_path = os.path.join(os.path.dirname(__file__), "msyh.ttf")
         
         try:
@@ -33,21 +33,23 @@ class CalendarPlugin(Star):
         return found_tag, found_name, found_title
 
     def parse_ics_to_dict(self, text):
-        """将 ICS 解析为字典列表，方便合并和序列化 """
         events_dict = {}
+        # 兼容换行符导致的 URL 切断
+        text = text.replace('\r\n ', '').replace('\n ', '')
         items = re.findall(r"BEGIN:VEVENT.*?END:VEVENT", text, re.S)
         for item in items:
             uid = re.search(r"UID:(.*)", item).group(1).strip() if re.search(r"UID:(.*)", item) else ""
             summary = re.search(r"SUMMARY:(.*)", item).group(1).strip() if re.search(r"SUMMARY:(.*)", item) else ""
             dtstart = re.search(r"DTSTART:(.*)", item).group(1).strip() if re.search(r"DTSTART:(.*)", item) else ""
-            url = re.search(r"URL:(.*)", item).group(1).strip() if re.search(r"URL:(.*)", item) else ""
+            # 改进：更精准地匹配 URL 字段
+            url_match = re.search(r"URL:(.*)", item)
+            url = url_match.group(1).strip() if url_match else ""
             
             if not dtstart or not uid: continue
             
             tag, name, title = self.parse_summary_v3(summary)
             try:
                 t_str = dtstart[:16].replace('Z','')
-                # 统一转为时间戳存储
                 bj_dt = datetime.strptime(t_str, "%Y%m%dT%H%M%S") + timedelta(hours=8)
                 events_dict[uid] = {
                     "uid": uid,
@@ -61,26 +63,33 @@ class CalendarPlugin(Star):
         return events_dict
 
     def load_cached_events(self):
-        """加载本地存储的历史日程 """
         if os.path.exists(self.cache_path):
-            with open(self.cache_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
+            try:
+                with open(self.cache_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except: return {}
         return {}
 
     def save_events(self, events):
-        """保存合并后的日程 """
         os.makedirs("data", exist_ok=True)
         with open(self.cache_path, 'w', encoding='utf-8') as f:
             json.dump(events, f, ensure_ascii=False, indent=2)
 
-    def get_color(self, url, name):
+    def get_color(self, url):
+        # 建立直播间号与颜色的映射
+        # 嘉然: 22637261, 乃琳: 22625027, 贝拉: 22632424, 心宜: 30849777, 思诺: 30858592
         mapping = {
-            "22637261": "#E799B0", "22625027": "#576690", "22632424": "#DB7D74", 
-            "30849777": "#C93773", "30858592": "#7252C0"
+            "22637261": "#E799B0",
+            "22625027": "#576690",
+            "22632424": "#DB7D74",
+            "30849777": "#C93773",
+            "30858592": "#7252C0"
         }
-        for uid, color in mapping.items():
-            if uid in url: return color
-        return "#5C6370"
+        # 从 URL 中匹配直播间数字
+        for room_id, color in mapping.items():
+            if room_id in url:
+                return color
+        return "#5C6370" # 默认团播色
 
     def draw_card(self, draw, base_img, x, y, ev, fonts):
         COL_W = 240
@@ -93,9 +102,11 @@ class CalendarPlugin(Star):
         
         card_h = 85 + (len(lines) - 1) * 25
         y_c = y + 35
-        # 判定划线逻辑 
+        
+        # 颜色识别逻辑应用
         is_canceled = ev.get("canceled", False)
-        m_clr = "#E0E0E0" if is_canceled else self.get_color(ev["url"], ev["name"])
+        m_clr = "#E0E0E0" if is_canceled else self.get_color(ev["url"])
+        
         draw.rounded_rectangle([x, y_c, x + COL_W - 30, y_c + card_h], radius=15, fill=m_clr)
         
         tag_canvas = PILImage.new('RGBA', base_img.size, (255, 255, 255, 0))
@@ -116,31 +127,23 @@ class CalendarPlugin(Star):
     async def update_calendar_image(self):
         async with httpx.AsyncClient() as client:
             try:
-                # 1. 下载并合并日程 
                 resp = await client.get(self.url, timeout=10)
                 new_events = self.parse_ics_to_dict(resp.text)
                 all_events = self.load_cached_events()
-                
-                # 合并逻辑：新下载的会覆盖旧的 UID，但旧的 UID 如果新下载里没有则保留 
                 all_events.update(new_events)
                 self.save_events(all_events)
                 
-                # 2. 转换为渲染列表并处理“重复划线”逻辑 
                 render_list = list(all_events.values())
                 render_list.sort(key=lambda x: x["time"])
                 
-                # 标记同天重复标题 
                 for i in range(len(render_list)):
                     render_list[i]["canceled"] = False
                     for j in range(i + 1, len(render_list)):
                         if render_list[i]["title"] == render_list[j]["title"] and \
                            render_list[i]["time"][:10] == render_list[j]["time"][:10]:
                             render_list[i]["canceled"] = True
-            except Exception as e:
-                print(f"Error: {e}")
-                return False
+            except: return False
             
-            # 3. 筛选本周数据
             today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             start_w = today - timedelta(days=today.weekday())
             w_data = {i: [] for i in range(7)}
@@ -150,7 +153,6 @@ class CalendarPlugin(Star):
                 if 0 <= diff <= 6:
                     w_data[diff].append(e)
 
-            # 4. 动态高度计算
             CW, MT = 260, 180
             day_heights = []
             for i in range(7):
