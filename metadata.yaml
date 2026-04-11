@@ -1,0 +1,5 @@
+name: asoul_calendar
+description: 每12小时自动更新 A-SOUL 直播日程并生成周日历图片。
+version: 1.1.0
+author: awslYui
+repo: https://github.com/awslYui/astrbot_plugin_asoul_calendar
