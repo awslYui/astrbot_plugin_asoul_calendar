@@ -6,7 +6,7 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api.all import *
 
-@register("asoul_calendar", "awslYui", "A-SOUL 直播日程, "1.0")
+@register("asoul_calendar", "awslYui", "A-SOUL 直播日程", "1.0")
 class CalendarPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
