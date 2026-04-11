@@ -16,7 +16,7 @@ class CalendarPlugin(Star):
         self.font_path = os.path.join(os.path.dirname(__file__), "msyh.ttf") # 更加稳妥的字体路径写法
         
         # 修正：增加了 desc 参数
-        @self.context.register_task("0 */12 * * *", desc="A-SOUL 日程表定时更新")
+        self.context.register_task("0 */12 * * *", desc="A-SOUL 日程表定时更新")
         async def scheduled_update():
             await self.update_calendar_image()
 
