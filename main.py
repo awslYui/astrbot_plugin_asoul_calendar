@@ -1,3 +1,16 @@
+import os
+import sys
+import subprocess
+
+# --- 自动修复依赖冲突的逻辑 ---
+try:
+    import tatsu
+    # 检查 tatsu 版本
+    if hasattr(tatsu, '__version__') and not tatsu.__version__.startswith('5.7'):
+        raise ImportError("Tatsu version mismatch")
+except (ImportError, ValueError):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "tatsu==5.7.3", "ics==0.7.2", "--force-reinstall"])
+# ---------------------------
 import arrow
 import httpx
 from ics import Calendar
