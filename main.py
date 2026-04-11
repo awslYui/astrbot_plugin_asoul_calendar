@@ -1,3 +1,4 @@
+import os
 import httpx
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime, timedelta
@@ -12,9 +13,10 @@ class CalendarPlugin(Star):
         super().__init__(context)
         self.url = "https://asoul.love/calendar.ics"
         self.image_path = "data/asoul_schedule.png"
-        self.font_path = "MiSans-Regular.ttf" # 确保仓库里有这个字体
+        self.font_path = os.path.join(os.path.dirname(__file__), "msyh.ttf") # 更加稳妥的字体路径写法
         
-        @self.context.register_task("0 */12 * * *")
+        # 修正：增加了 desc 参数
+        @self.context.register_task("0 */12 * * *", desc="A-SOUL 日程表定时更新")
         async def scheduled_update():
             await self.update_calendar_image()
 
