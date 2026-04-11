@@ -12,7 +12,7 @@ class CalendarPlugin(Star):
         super().__init__(context)
         self.url = "https://asoul.love/calendar.ics"
         self.image_path = "data/asoul_schedule.png"
-        self.font_path = os.path.join(os.path.dirname(__file__), "MiSans-Regular.ttf")
+        self.font_path = os.path.join(os.path.dirname(__file__), "msyh.ttf")
         
         # 关键字参数确保兼容性
         self.context.register_task(
