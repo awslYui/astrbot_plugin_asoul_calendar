@@ -34,45 +34,56 @@ class CalendarPlugin(Star):
 
     def parse_ics_to_dict(self, text):
         events_dict = {}
-        # 处理 ICS 特有的换行折叠（即行首为空格表示上一行的延续）
-        text = re.sub(r'\r\n\s', '', text) 
-        text = re.sub(r'\n\s', '', text)
+        # 1. 重要：预处理 ICS 换行折叠。ICS 规范中行首空格代表上一行的延续。
+        text = re.sub(r'\r?\n\s', '', text) 
         
-        # 提取每个 VEVENT 块
+        # 2. 分解 VEVENT 块
         vevent_blocks = re.findall(r"BEGIN:VEVENT(.*?)END:VEVENT", text, re.S)
         
         for block in vevent_blocks:
-            # 在当前块内提取信息
-            uid_match = re.search(r"UID:(.*?)(?:\r|\n)", block)
-            summary_match = re.search(r"SUMMARY:(.*?)(?:\r|\n)", block)
-            dtstart_match = re.search(r"DTSTART:(.*?)(?:\r|\n)", block)
-            url_match = re.search(r"URL:(.*?)(?:\r|\n)", block)
+            # 3. 严格提取关键字段（使用多行模式 ^ 限定行首，防止跨字段匹配）
+            uid = re.search(r"^UID:(.*?)$", block, re.M)
+            summary = re.search(r"^SUMMARY:(.*?)$", block, re.M)
+            dtstart = re.search(r"^DTSTART:(.*?)$", block, re.M)
+            url_field = re.search(r"^URL:(.*?)$", block, re.M)
             
-            uid = uid_match.group(1).strip() if uid_match else None
-            summary = summary_match.group(1).strip() if summary_match else ""
-            dtstart = dtstart_match.group(1).strip() if dtstart_match else None
-            url = url_match.group(1).strip() if url_match else ""
+            u_id = uid.group(1).strip() if uid else None
+            sum_text = summary.group(1).strip() if summary else ""
+            t_start = dtstart.group(1).strip() if dtstart else None
+            actual_url = url_field.group(1).strip() if url_field else ""
             
-            if not uid or not dtstart:
-                continue
+            if not u_id or not t_start: continue
             
-            tag, name, title = self.parse_summary_v3(summary)
+            tag, name, title = self.parse_summary_v3(sum_text)
             try:
-                # 处理时间格式 (可能是 20260411T070000Z 或 20260411T070000)
-                t_str = dtstart.replace('Z', '')[:15]
+                t_str = t_start.replace('Z', '')[:15]
                 bj_dt = datetime.strptime(t_str, "%Y%m%dT%H%M%S") + timedelta(hours=8)
                 
-                events_dict[uid] = {
-                    "uid": uid,
+                events_dict[u_id] = {
+                    "uid": u_id,
                     "time": bj_dt.strftime("%Y-%m-%d %H:%M:%S"),
                     "tag": tag,
                     "name": name,
                     "title": title,
-                    "url": url # 这里保存了当前块内的 URL
+                    "url": actual_url # 此时存储的是该块内唯一的 URL 字段内容
                 }
-            except:
-                continue
+            except: continue
         return events_dict
+
+    def get_color(self, url):
+        # 直播间号与颜色强映射
+        mapping = {
+            "22637261": "#E799B0", # 嘉然
+            "22625027": "#576690", # 乃琳
+            "22632424": "#DB7D74", # 贝拉
+            "30849777": "#C93773", # 心宜
+            "30858592": "#7252C0"  # 思诺
+        }
+        # 仅针对 URL 字段进行 room_id 匹配
+        for room_id, color in mapping.items():
+            if room_id in url:
+                return color
+        return "#5C6370" # 默认色
 
     def load_cached_events(self):
         if os.path.exists(self.cache_path):
@@ -87,20 +98,6 @@ class CalendarPlugin(Star):
         with open(self.cache_path, 'w', encoding='utf-8') as f:
             json.dump(events, f, ensure_ascii=False, indent=2)
 
-    def get_color(self, url):
-        # 颜色与直播间号严格匹配
-        mapping = {
-            "22637261": "#E799B0", # 嘉然
-            "22625027": "#576690", # 乃琳
-            "22632424": "#DB7D74", # 贝拉
-            "30849777": "#C93773", # 心宜
-            "30858592": "#7252C0"  # 思诺
-        }
-        for room_id, color in mapping.items():
-            if room_id in url:
-                return color
-        return "#5C6370" # 团播/夜谈默认灰色
-
     def draw_card(self, draw, base_img, x, y, ev, fonts):
         COL_W = 240
         draw.line([x - 15, y + 10, x - 15, y + 180], fill="#DCDFE6", width=2)
@@ -113,13 +110,12 @@ class CalendarPlugin(Star):
         card_h = 85 + (len(lines) - 1) * 25
         y_c = y + 35
         
-        # 颜色匹配：通过当前日程对象保存的 URL 进行判定
+        # 颜色识别：ev["url"] 是我们从 URL 字段精准拿到的
         is_canceled = ev.get("canceled", False)
         m_clr = "#E0E0E0" if is_canceled else self.get_color(ev["url"])
         
         draw.rounded_rectangle([x, y_c, x + COL_W - 30, y_c + card_h], radius=15, fill=m_clr)
         
-        # 绘制半透明 Tag 框
         tag_canvas = PILImage.new('RGBA', base_img.size, (255, 255, 255, 0))
         tag_draw = ImageDraw.Draw(tag_canvas)
         tag_draw.rounded_rectangle([x+10, y_c+15, x+65, y_c+43], radius=8, fill=(255, 255, 255, 60))
@@ -139,15 +135,15 @@ class CalendarPlugin(Star):
         async with httpx.AsyncClient() as client:
             try:
                 resp = await client.get(self.url, timeout=10)
-                new_events = self.parse_ics_to_dict(resp.text)
-                all_events = self.load_cached_events()
-                all_events.update(new_events) # 合并新旧日程
-                self.save_events(all_events)
+                new_evs = self.parse_ics_to_dict(resp.text)
+                all_evs = self.load_cached_events()
+                all_evs.update(new_evs)
+                self.save_events(all_evs)
                 
-                render_list = list(all_events.values())
+                render_list = list(all_evs.values())
                 render_list.sort(key=lambda x: x["time"])
                 
-                # 同天重复项标记（保留最晚的，划掉较早的）
+                # 处理划线逻辑
                 for i in range(len(render_list)):
                     render_list[i]["canceled"] = False
                     for j in range(i + 1, len(render_list)):
@@ -156,23 +152,21 @@ class CalendarPlugin(Star):
                             render_list[i]["canceled"] = True
             except: return False
             
-            # 筛选本周数据进行绘制
             today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             start_w = today - timedelta(days=today.weekday())
             w_data = {i: [] for i in range(7)}
             for e in render_list:
                 ev_dt = datetime.strptime(e["time"], "%Y-%m-%d %H:%M:%S")
                 diff = (ev_dt.date() - start_w.date()).days
-                if 0 <= diff <= 6:
-                    w_data[diff].append(e)
+                if 0 <= diff <= 6: w_data[diff].append(e)
 
             CW, MT = 260, 180
             day_heights = []
             for i in range(7):
                 h = 0
                 for ev in w_data[i]:
-                    lines_count = len([ev["title"][k:k+9] for k in range(0, len(ev["title"]), 9)][:3])
-                    h += (85 + (lines_count - 1) * 25 + 55)
+                    lc = len([ev["title"][k:k+9] for k in range(0, len(ev["title"]), 9)][:3])
+                    h += (85 + (lc - 1) * 25 + 55)
                 day_heights.append(h)
             
             img_h = MT + (max(day_heights) if day_heights else 100) + 60
@@ -214,4 +208,4 @@ class CalendarPlugin(Star):
     async def force_update(self, event: AstrMessageEvent):
         yield event.plain_result("正在更新日程表...")
         if await self.update_calendar_image(): yield event.image_result(self.image_path)
-        else: yield event.plain_result("更新失败，请检查网络或日志。")
+        else: yield event.plain_result("更新失败。")
