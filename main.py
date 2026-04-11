@@ -34,98 +34,58 @@ class CalendarPlugin(Star):
 
     def parse_ics_to_dict(self, text):
         events_dict = {}
-        # 1. 重要：预处理 ICS 换行折叠。ICS 规范中行首空格代表上一行的延续。
         text = re.sub(r'\r?\n\s', '', text) 
-        
-        # 2. 分解 VEVENT 块
         vevent_blocks = re.findall(r"BEGIN:VEVENT(.*?)END:VEVENT", text, re.S)
-        
         for block in vevent_blocks:
-            # 3. 严格提取关键字段（使用多行模式 ^ 限定行首，防止跨字段匹配）
             uid = re.search(r"^UID:(.*?)$", block, re.M)
             summary = re.search(r"^SUMMARY:(.*?)$", block, re.M)
             dtstart = re.search(r"^DTSTART:(.*?)$", block, re.M)
             url_field = re.search(r"^URL:(.*?)$", block, re.M)
-            
             u_id = uid.group(1).strip() if uid else None
             sum_text = summary.group(1).strip() if summary else ""
             t_start = dtstart.group(1).strip() if dtstart else None
             actual_url = url_field.group(1).strip() if url_field else ""
-            
             if not u_id or not t_start: continue
-            
             tag, name, title = self.parse_summary_v3(sum_text)
             try:
                 t_str = t_start.replace('Z', '')[:15]
                 bj_dt = datetime.strptime(t_str, "%Y%m%dT%H%M%S") + timedelta(hours=8)
-                
                 events_dict[u_id] = {
-                    "uid": u_id,
-                    "time": bj_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                    "tag": tag,
-                    "name": name,
-                    "title": title,
-                    "url": actual_url # 此时存储的是该块内唯一的 URL 字段内容
+                    "uid": u_id, "time": bj_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                    "tag": tag, "name": name, "title": title, "url": actual_url
                 }
             except: continue
         return events_dict
 
     def get_color(self, url):
-        # 直播间号与颜色强映射
         mapping = {
-            "22637261": "#E799B0", # 嘉然
-            "22625027": "#576690", # 乃琳
-            "22632424": "#DB7D74", # 贝拉
-            "30849777": "#C93773", # 心宜
-            "30858592": "#7252C0"  # 思诺
+            "22637261": "#E799B0", "22625027": "#576690", "22632424": "#DB7D74",
+            "30849777": "#C93773", "30858592": "#7252C0"
         }
-        # 仅针对 URL 字段进行 room_id 匹配
         for room_id, color in mapping.items():
-            if room_id in url:
-                return color
-        return "#5C6370" # 默认色
-
-    def load_cached_events(self):
-        if os.path.exists(self.cache_path):
-            try:
-                with open(self.cache_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except: return {}
-        return {}
-
-    def save_events(self, events):
-        os.makedirs("data", exist_ok=True)
-        with open(self.cache_path, 'w', encoding='utf-8') as f:
-            json.dump(events, f, ensure_ascii=False, indent=2)
+            if room_id in url: return color
+        return "#5C6370"
 
     def draw_card(self, draw, base_img, x, y, ev, fonts):
         COL_W = 240
         draw.line([x - 15, y + 10, x - 15, y + 180], fill="#DCDFE6", width=2)
         draw.text((x, y), datetime.strptime(ev["time"], "%Y-%m-%d %H:%M:%S").strftime('%H:%M'), fill="#99A2AA", font=fonts['time'])
-        
         title = ev["title"]
         if len(title) > 33: title = title[:32] + "..."
         lines = [title[i:i+9] for i in range(0, len(title), 9)][:3]
-        
         card_h = 85 + (len(lines) - 1) * 25
         y_c = y + 35
-        
-        # 颜色识别：ev["url"] 是我们从 URL 字段精准拿到的
         is_canceled = ev.get("canceled", False)
         m_clr = "#E0E0E0" if is_canceled else self.get_color(ev["url"])
-        
         draw.rounded_rectangle([x, y_c, x + COL_W - 30, y_c + card_h], radius=15, fill=m_clr)
-        
         tag_canvas = PILImage.new('RGBA', base_img.size, (255, 255, 255, 0))
         tag_draw = ImageDraw.Draw(tag_canvas)
         tag_draw.rounded_rectangle([x+10, y_c+15, x+65, y_c+43], radius=8, fill=(255, 255, 255, 60))
         base_img.paste(tag_canvas, (0, 0), tag_canvas)
-        
         draw.text((x + 18, y_c + 18), ev["tag"], fill="#FFFFFF", font=fonts['tag'])
         draw.text((x + 75, y_c + 16), ev["name"], fill="#FFFFFF", font=fonts['name'])
         for i, line in enumerate(lines):
             draw.text((x + 10, y_c + 50 + i * 25), line, fill="#FFFFFF", font=fonts['title'])
-            
         if is_canceled:
             line_y_mid = y_c + card_h // 2
             draw.line([x + 10, line_y_mid, x + COL_W - 40, line_y_mid], fill="#444444", width=3)
@@ -139,11 +99,8 @@ class CalendarPlugin(Star):
                 all_evs = self.load_cached_events()
                 all_evs.update(new_evs)
                 self.save_events(all_evs)
-                
                 render_list = list(all_evs.values())
                 render_list.sort(key=lambda x: x["time"])
-                
-                # 处理划线逻辑
                 for i in range(len(render_list)):
                     render_list[i]["canceled"] = False
                     for j in range(i + 1, len(render_list)):
@@ -161,21 +118,15 @@ class CalendarPlugin(Star):
                 if 0 <= diff <= 6: w_data[diff].append(e)
 
             CW, MT = 260, 180
-            day_heights = []
-            for i in range(7):
-                h = 0
-                for ev in w_data[i]:
-                    lc = len([ev["title"][k:k+9] for k in range(0, len(ev["title"]), 9)][:3])
-                    h += (85 + (lc - 1) * 25 + 55)
-                day_heights.append(h)
-            
+            day_heights = [sum([(85 + (len([ev["title"][k:k+9] for k in range(0, len(ev["title"]), 9)][:3]) - 1) * 25 + 55) for ev in w_data[i]]) for i in range(7)]
             img_h = MT + (max(day_heights) if day_heights else 100) + 60
             img = PILImage.new('RGB', (CW * 7 + 80, int(img_h)), color="#F4F5F7")
             draw = ImageDraw.Draw(img)
             
             try:
                 fonts = {
-                    'header': ImageFont.truetype(self.font_path, 48),
+                    'header': ImageFont.truetype(self.font_path, 52),
+                    'update': ImageFont.truetype(self.font_path, 18),
                     'date': ImageFont.truetype(self.font_path, 22),
                     'time': ImageFont.truetype(self.font_path, 19),
                     'tag': ImageFont.truetype(self.font_path, 17),
@@ -184,7 +135,18 @@ class CalendarPlugin(Star):
                 }
             except: return False
 
-            draw.text((CW*3.5-80, 50), "本 周 日 程", fill="#222222", font=fonts['header'])
+            # --- 绘制超粗大标题 ---
+            header_text = "本 周 日 程"
+            hx, hy = CW*3.5-120, 50
+            # 模拟加粗：在四周偏移1像素绘制多次
+            for off_x in range(-1, 2):
+                for off_y in range(-1, 2):
+                    draw.text((hx + off_x, hy + off_y), header_text, fill="#222222", font=fonts['header'])
+            
+            # --- 绘制更新时间 ---
+            update_str = f"更新于: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            draw.text((hx + 280, hy + 32), update_str, fill="#99A2AA", font=fonts['update'])
+
             w_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
             for i in range(7):
                 x = 55 + i * CW
@@ -198,6 +160,18 @@ class CalendarPlugin(Star):
             
             img.save(self.image_path)
             return True
+
+    def load_cached_events(self):
+        if os.path.exists(self.cache_path):
+            try:
+                with open(self.cache_path, 'r', encoding='utf-8') as f: return json.load(f)
+            except: return {}
+        return {}
+
+    def save_events(self, events):
+        os.makedirs("data", exist_ok=True)
+        with open(self.cache_path, 'w', encoding='utf-8') as f:
+            json.dump(events, f, ensure_ascii=False, indent=2)
 
     @filter.command("日程表")
     async def send_calendar(self, event: AstrMessageEvent):
