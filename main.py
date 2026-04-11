@@ -6,7 +6,7 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api.all import *
 
-@register("asoul_calendar", "awslYui", "枝江直播日程", "1.0")
+@register("asoul_calendar", "awslYui", "A-SOUL 日程", "1.0")
 class CalendarPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -14,41 +14,26 @@ class CalendarPlugin(Star):
         self.image_path = "data/asoul_schedule.png"
         self.font_path = os.path.join(os.path.dirname(__file__), "msyh.ttf")
         
-        # 关键字参数确保兼容性
-        self.context.register_task(
-            cron="0 */12 * * *", 
-            func=self.update_calendar_image, 
-            desc="A-SOUL 日程更新"
-        )
+        # 修复位置参数
+        try:
+            self.context.register_task("0 */12 * * *", self.update_calendar_image, "A-SOUL 日程更新")
+        except:
+            pass
 
     def parse_summary_v2(self, summary_text):
-        """核心解析逻辑：拆分 Tag, 名字, 和 标题"""
-        # 直播类型预定义
         types = ["突击", "2D", "日常", "节目"]
-        found_tag = "日常" # 兜底类型
+        found_tag = "日常"
         
-        # 1. 提取第一个 【】 内的内容作为直播类型和名字
-        # 例子: 【突击】贝拉突击: 【突击】一起看前瞻
+        # 匹配 B站官方格式: 【类型】成员名: 【类型】标题
         match = re.search(r"^【(.*?)】(.*?)[:：]", summary_text)
         if match:
-            type_and_name_part = match.group(1) # '突击'
-            name_part = match.group(2) # '贝拉突击'
-            full_title = summary_text.split(": ", 1)[1] if ": " in summary_text else summary_text
-            
-            # 确定直播类型
+            tag_part = match.group(1)
+            name_part = match.group(2)
+            title_part = summary_text.split("】", 2)[-1].strip() if "】" in summary_text else summary_text
             for t in types:
-                if t in type_and_name_part:
-                    found_tag = t
-                    break
-                    
-            return found_tag, name_part.strip(), full_title.strip()
-        else:
-            # 如果不符合 B站官方 ICS 格式，使用模糊识别
-            for t in types:
-                if t in summary_text:
-                    found_tag = t
-                    break
-            return found_tag, "团播/夜谈", summary_text
+                if t in tag_part: found_tag = t
+            return found_tag, name_part.replace("突击", "").strip(), title_part
+        return found_tag, "团播/夜谈", summary_text
 
     def parse_ics_advanced(self, text):
         events = []
@@ -57,149 +42,98 @@ class CalendarPlugin(Star):
             summary = re.search(r"SUMMARY:(.*)", item).group(1).strip() if re.search(r"SUMMARY:(.*)", item) else ""
             dtstart = re.search(r"DTSTART:(.*)", item).group(1).strip() if re.search(r"DTSTART:(.*)", item) else ""
             location = re.search(r"LOCATION:(.*)", item).group(1).strip() if re.search(r"LOCATION:(.*)", item) else ""
-            
             if not dtstart or not summary: continue
             
-            # 状态识别
             is_canceled = any(kw in summary for kw in ["取消", "延期", "更改"])
-            
-            # 深度解析 SUMMARY
             tag, name, title = self.parse_summary_v2(summary)
             
             try:
                 t_str = dtstart[:16].replace('Z','')
                 bj_dt = datetime.strptime(t_str, "%Y%m%dT%H%M%S") + timedelta(hours=8)
-                events.append({
-                    "time": bj_dt,
-                    "tag": tag,
-                    "name": name,
-                    "title": title,
-                    "url": location,
-                    "canceled": is_canceled
-                })
+                events.append({"time": bj_dt, "tag": tag, "name": name, "title": title, "url": location, "canceled": is_canceled})
             except: continue
         return sorted(events, key=lambda x: x["time"])
 
     def get_color(self, url, title):
-        group_color = "#5C6370" # 团播色
         mapping = {"22637261": "#E799B0", "22625027": "#576690", "22632424": "#DB7D74", "30849777": "#C93773", "30858592": "#7252C0"}
         for uid, color in mapping.items():
             if uid in url: return color
         kws = {"嘉然": "#E799B0", "贝拉": "#DB7D74", "乃琳": "#576690", "思诺": "#7252C0", "心宜": "#C93773"}
         for k, v in kws.items():
             if k in title: return v
-        return group_color
+        return "#5C6370"
 
-    def draw_single_event(self, draw, x, y, ev, fonts):
-        """精准手绘单个日程块，复刻例图排版"""
-        COL_W = 280
-        CARD_H = 110
+    def draw_event_card(self, draw, x, y, ev, fonts):
+        COL_W, CARD_H = 280, 105
+        # 左侧灰色线
+        draw.line([x - 18, y + 10, x - 18, y + 150], fill="#DCDFE6", width=2)
+        # 时间
+        draw.text((x, y), ev["time"].strftime('%H:%M'), fill="#99A2AA", font=fonts['time'])
         
-        # 1. 绘制左侧灰色指示线
-        draw.line([x - 15, y, x - 15, y + 140], fill="#DCDFE6", width=2)
+        y_c = y + 35
+        m_clr = "#E0E0E0" if ev["canceled"] else self.get_color(ev["url"], ev["name"])
+        draw.rounded_rectangle([x, y_c, x + COL_W - 45, y_c + CARD_H], radius=15, fill=m_clr)
         
-        # 2. 时间文字
-        time_color = "#99A2AA" if ev["canceled"] else "#666666"
-        draw.text((x, y), ev["time"].strftime('%H:%M'), fill=time_color, font=fonts['time'])
+        # Tag 标签
+        tx, ty = x + 15, y_c + 15
+        draw.rounded_rectangle([tx, ty, tx + 65, ty + 28], radius=8, fill="#FFFFFF44")
+        draw.text((tx + 12, ty + 3), ev["tag"], fill="#FFFFFF", font=fonts['tag'])
         
-        y_card = y + 30
-        card_rect = [x, y_card, x + COL_W - 40, y_card + CARD_H]
+        # 名字
+        draw.text((tx + 80, ty + 1), ev["name"], fill="#FFFFFF", font=fonts['name'])
         
-        # 3. 卡片背景颜色
-        main_color = "#E0E0E0" if ev["canceled"] else self.get_color(ev["url"], ev["title"])
-        draw.rounded_rectangle(card_rect, radius=12, fill=main_color)
+        # 标题 (自动截断)
+        title = ev["title"]
+        d_title = title if len(title) <= 12 else title[:11] + "..."
+        draw.text((x + 15, ty + 42), d_title, fill="#FFFFFF", font=fonts['title'])
         
-        # 4. 绘制 Tag 色块 (在卡片内部)
-        tag_w = 60
-        tag_h = 28
-        tag_x = x + 15
-        tag_y = y_card + 15
-        # Tag 背景颜色（半透明白色，增加高级感）
-        draw.rounded_rectangle([tag_x, tag_y, tag_x + tag_w, tag_y + tag_h], radius=6, fill="#FFFFFF44")
-        # Tag 文字
-        draw.text((tag_x + 10, tag_y + 3), ev["tag"], fill="#FFFFFF", font=fonts['tag'])
-        
-        # 5. 成员名字 (在 Tag 右侧)
-        draw.text((tag_x + tag_w + 15, tag_y + 1), ev["name"], fill="#FFFFFF", font=fonts['main'])
-        
-        # 6. 直播标题 (在成员名字下方，支持简单换行)
-        title_y = tag_y + 40
-        title_txt = ev["title"]
-        # 标题换行逻辑 (根据像素估算)
-        line1, line2 = "", ""
-        if len(title_txt) > 13:
-            line1 = title_txt[:12]
-            line2 = title_txt[12:25] + ("..." if len(title_txt) > 25 else "")
-        else:
-            line1 = title_txt
-            
-        draw.text((x + 15, title_y), line1, fill="#FFFFFF", font=fonts['title'])
-        if line2:
-            draw.text((x + 15, title_y + 25), line2, fill="#FFFFFF", font=fonts['title'])
-            
-        # 7. 如果取消，加删除线
         if ev["canceled"]:
-            line_y_mid = y_card + CARD_H//2
-            draw.line([x + 10, line_y_mid, x + COL_W - 50, line_y_mid], fill="#555555", width=3)
-            
-        return CARD_H + 50 # 返回该日程占用的高度
+            draw.line([x + 10, y_c + CARD_H//2, x + COL_W - 55, y_c + CARD_H//2], fill="#444444", width=3)
+        return 170
 
     async def update_calendar_image(self):
         async with httpx.AsyncClient() as client:
             try:
                 resp = await client.get(self.url, timeout=10)
-                all_events = self.parse_ics_advanced(resp.text)
+                all_ev = self.parse_ics_advanced(resp.text)
             except: return False
             
             today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            start_of_week = today - timedelta(days=today.weekday())
-            week_data = {i: [] for i in range(7)}
-            for ev in all_events:
-                diff = (ev["time"].date() - start_of_week.date()).days
-                if 0 <= diff <= 6: week_data[diff].append(ev)
+            start_w = today - timedelta(days=today.weekday())
+            w_data = {i: [] for i in range(7)}
+            for e in all_ev:
+                diff = (e["time"].date() - start_w.date()).days
+                if 0 <= diff <= 6: w_data[diff].append(e)
 
-            # 画布参数：横排复刻例图比例
-            COL_W, MARGIN_T = 300, 150
-            max_ev = max([len(v) for v in week_data.values()] + [1])
-            # 动态计算画布高度，日程多则长
-            img_h = MARGIN_T + max_ev * 180 + 150
-            
-            # 使用淡蓝色底板，更接近 B站动态
-            img = PILImage.new('RGB', (COL_W * 7 + 100, img_h), color="#F4F5F7")
+            # 画布
+            CW, MT = 300, 160
+            max_c = max([len(v) for v in w_data.values()] + [1])
+            img = PILImage.new('RGB', (CW * 7 + 100, MT + max_c * 180 + 100), color="#F4F5F7")
             draw = ImageDraw.Draw(img)
             
             try:
-                f_t = ImageFont.truetype(self.font_path, 42)
-                f_d = ImageFont.truetype(self.font_path, 22)
                 fonts = {
+                    'title': ImageFont.truetype(self.font_path, 40),
+                    'date': ImageFont.truetype(self.font_path, 22),
                     'time': ImageFont.truetype(self.font_path, 20),
                     'tag': ImageFont.truetype(self.font_path, 17),
-                    'main': ImageFont.truetype(self.font_path, 20),
-                    'title': ImageFont.truetype(self.font_path, 18),
+                    'name': ImageFont.truetype(self.font_path, 21),
+                    'title': ImageFont.truetype(self.font_path, 19)
                 }
             except: return False
 
-            draw.text((COL_W*3.5-40, 40), "本周日程", fill="#222222", font=f_t)
+            draw.text((CW*3.5-60, 45), "本周日程", fill="#222222", font=fonts['title'])
             w_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
             
             for i in range(7):
-                x = 60 + i * COL_W # MARGIN_L = 60
-                curr_d = start_of_week + timedelta(days=i)
-                # 绘制日期头
-                is_today = (i == datetime.now().weekday())
-                d_color = "#00AEEC" if is_today else "#666666"
-                draw.text((x, 100), curr_d.strftime('%m月%d日'), fill=d_color, font=f_d)
-                draw.text((x + 130, 100), w_names[i], fill=d_color, font=f_d)
+                x = 65 + i * CW
+                curr_d = start_w + timedelta(days=i)
+                d_clr = "#00AEEC" if i == datetime.now().weekday() else "#666666"
+                draw.text((x, 105), curr_d.strftime('%m/%d') + f" {w_names[i]}", fill=d_clr, font=fonts['date'])
                 
-                # 绘制今天高亮提示线
-                if is_today:
-                    draw.line([x - 10, 135, x + 200, 135], fill="#00AEEC", width=3)
-                
-                y_offset = MARGIN_T
-                for ev in week_data[i]:
-                    # 关键修改：调用精准绘图函数
-                    used_h = self.draw_single_event(draw, x, y_offset, ev, fonts)
-                    y_offset += used_h
+                y_o = MT
+                for ev in w_data[i]:
+                    y_o += self.draw_event_card(draw, x, y_o, ev, fonts)
             
             os.makedirs("data", exist_ok=True)
             img.save(self.image_path)
@@ -208,10 +142,10 @@ class CalendarPlugin(Star):
     @filter.command("日程表")
     async def send_calendar(self, event: AstrMessageEvent):
         if os.path.exists(self.image_path): yield event.image_result(self.image_path)
-        else: yield event.plain_result("请先执行 /更新日程表")
+        else: yield event.plain_result("请执行 /更新日程表")
 
     @filter.command("更新日程表")
     async def force_update(self, event: AstrMessageEvent):
-        yield event.plain_result("正在同步 A-SOUL 日历并高精复刻排版...")
+        yield event.plain_result("正在高精同步 A-SOUL 日程...")
         if await self.update_calendar_image(): yield event.image_result(self.image_path)
         else: yield event.plain_result("同步失败，请检查字体文件。")
