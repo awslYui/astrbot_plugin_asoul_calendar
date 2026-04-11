@@ -6,13 +6,13 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api.all import *
 
-@register("asoul_calendar", "awslYui", "A-SOUL 日程 (像素复刻版)", "1.5.1")
+@register("asoul_calendar", "awslYui", "A-SOUL 日程", "1.0")
 class CalendarPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
         self.url = "https://asoul.love/calendar.ics"
         self.image_path = "data/asoul_schedule.png"
-        self.font_path = os.path.join(os.path.dirname(__file__), "MiSans-Regular.ttf")
+        self.font_path = os.path.join(os.path.dirname(__file__), "msyh.ttf")
         
         # 兼容性注册
         try:
@@ -150,6 +150,6 @@ class CalendarPlugin(Star):
 
     @filter.command("更新日程表")
     async def force_update(self, event: AstrMessageEvent):
-        yield event.plain_result("正在高精复刻 A-SOUL 日程表...")
+        yield event.plain_result("正在更新日程表...")
         if await self.update_calendar_image(): yield event.image_result(self.image_path)
         else: yield event.plain_result("同步失败，请检查字体。")
