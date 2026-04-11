@@ -1,6 +1,6 @@
 import os
 import httpx
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image as PILImage, ImageDraw, ImageFont
 from datetime import datetime, timedelta
 import os, re
 from astrbot.api.event import filter, AstrMessageEvent
@@ -61,7 +61,7 @@ class CalendarPlugin(Star):
             # 绘图逻辑 (保持之前的 B 站风格)
             card_h, pad, margin_t = 90, 20, 100
             img_h = margin_t + len(upcoming) * (card_h + pad) + 50
-            img = Image.new('RGB', (780, img_h), color="#F4F5F7")
+            img = PILImage.new('RGB', (780, img_h), color="#F4F5F7")
             draw = ImageDraw.Draw(img)
             
             try:
