@@ -17,12 +17,19 @@ class CalendarPlugin(Star):
         self.cache_path = os.path.join(self.data_dir, "asoul_events_cache.json")
         self.font_path = os.path.join(os.path.dirname(__file__), "msyh.ttf")
         
-        try:
-            # 每12小时自动更新本周和下周的图片
-            self.context.register_task("0 */12 * * *", lambda: self.update_calendar_image(0))
-            self.context.register_task("5 */12 * * *", lambda: self.update_calendar_image(1))
-        except:
-            pass
+        # 监听框架启动完成后再注册定时任务，防止初始化阶段冲突
+        @context.on(Context.ON_READY)
+        async def on_ready():
+            try:
+                # 包装成异步函数
+                async def update_this_week(): await self.update_calendar_image(0)
+                async def update_next_week(): await self.update_calendar_image(1)
+                
+                # 每12小时自动更新
+                self.context.register_task("0 */12 * * *", update_this_week)
+                self.context.register_task("5 */12 * * *", update_next_week)
+            except Exception as e:
+                print(f"[asoul_calendar] 注册定时任务失败: {e}")
 
     def parse_summary_v3(self, text):
         types = ["突击", "2D", "日常", "节目"]
@@ -95,7 +102,6 @@ class CalendarPlugin(Star):
         return card_h + 55
 
     async def update_calendar_image(self, week_offset=0):
-        # 根据 offset 决定保存路径
         suffix = "this" if week_offset == 0 else "next"
         image_path = os.path.join(self.data_dir, f"schedule_{suffix}.png")
         
@@ -118,7 +124,6 @@ class CalendarPlugin(Star):
                 print(f"Error updating calendar: {e}")
                 return None
             
-            # 计算日期范围
             today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             start_w = (today - timedelta(days=today.weekday())) + timedelta(weeks=week_offset)
             
@@ -135,18 +140,22 @@ class CalendarPlugin(Star):
             draw = ImageDraw.Draw(img)
             
             try:
-                fonts = {
-                    'header': ImageFont.truetype(self.font_path, 52),
-                    'update': ImageFont.truetype(self.font_path, 18),
-                    'date': ImageFont.truetype(self.font_path, 22),
-                    'time': ImageFont.truetype(self.font_path, 19),
-                    'tag': ImageFont.truetype(self.font_path, 17),
-                    'name': ImageFont.truetype(self.font_path, 20),
-                    'title': ImageFont.truetype(self.font_path, 19)
-                }
+                # 备用方案：如果字体文件丢失，使用默认字体防止程序崩掉
+                if not os.path.exists(self.font_path):
+                    font_load = ImageFont.load_default()
+                    fonts = {k: font_load for k in ['header', 'update', 'date', 'time', 'tag', 'name', 'title']}
+                else:
+                    fonts = {
+                        'header': ImageFont.truetype(self.font_path, 52),
+                        'update': ImageFont.truetype(self.font_path, 18),
+                        'date': ImageFont.truetype(self.font_path, 22),
+                        'time': ImageFont.truetype(self.font_path, 19),
+                        'tag': ImageFont.truetype(self.font_path, 17),
+                        'name': ImageFont.truetype(self.font_path, 20),
+                        'title': ImageFont.truetype(self.font_path, 19)
+                    }
             except: return None
 
-            # 动态标题
             header_text = "本 周 日 程" if week_offset == 0 else "下 周 日 程"
             hx, hy = CW*3.5-120, 50
             for off_x in range(-1, 2):
@@ -160,7 +169,6 @@ class CalendarPlugin(Star):
             for i in range(7):
                 x = 55 + i * CW
                 curr_d = start_w + timedelta(days=i)
-                # 只有在本周且日期相同时才高亮蓝字
                 d_clr = "#00AEEC" if curr_d.date() == datetime.now().date() else "#666666"
                 draw.text((x, 120), curr_d.strftime('%m/%d'), fill=d_clr, font=fonts['date'])
                 draw.text((x + 85, 120), w_names[i], fill=d_clr, font=fonts['date'])
