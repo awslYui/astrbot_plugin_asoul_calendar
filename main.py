@@ -17,19 +17,20 @@ class CalendarPlugin(Star):
         self.cache_path = os.path.join(self.data_dir, "asoul_events_cache.json")
         self.font_path = os.path.join(os.path.dirname(__file__), "msyh.ttf")
         
-        # 监听框架启动完成后再注册定时任务，防止初始化阶段冲突
-        @context.on(Context.ON_READY)
-        async def on_ready():
-            try:
-                # 包装成异步函数
-                async def update_this_week(): await self.update_calendar_image(0)
-                async def update_next_week(): await self.update_calendar_image(1)
-                
-                # 每12小时自动更新
-                self.context.register_task("0 */12 * * *", update_this_week)
-                self.context.register_task("5 */12 * * *", update_next_week)
-            except Exception as e:
-                print(f"[asoul_calendar] 注册定时任务失败: {e}")
+        # 定义异步包装函数，确保传入 register_task 的是协程对象
+        async def update_this_week(): 
+            await self.update_calendar_image(0)
+            
+        async def update_next_week(): 
+            await self.update_calendar_image(1)
+        
+        # 兼容性写法：直接尝试注册任务
+        try:
+            self.context.register_task("0 */12 * * *", update_this_week)
+            self.context.register_task("5 */12 * * *", update_next_week)
+        except Exception as e:
+            # 防止因框架版本极其特殊导致的二次崩溃
+            print(f"[asoul_calendar] 自动任务注册失败: {e}")
 
     def parse_summary_v3(self, text):
         types = ["突击", "2D", "日常", "节目"]
@@ -107,7 +108,7 @@ class CalendarPlugin(Star):
         
         async with httpx.AsyncClient() as client:
             try:
-                resp = await client.get(self.url, timeout=10)
+                resp = await client.get(self.url, timeout=15)
                 new_evs = self.parse_ics_to_dict(resp.text)
                 all_evs = self.load_cached_events()
                 all_evs.update(new_evs)
@@ -121,7 +122,7 @@ class CalendarPlugin(Star):
                            render_list[i]["time"][:10] == render_list[j]["time"][:10]:
                             render_list[i]["canceled"] = True
             except Exception as e:
-                print(f"Error updating calendar: {e}")
+                print(f"[asoul_calendar] 更新出错: {e}")
                 return None
             
             today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -140,7 +141,6 @@ class CalendarPlugin(Star):
             draw = ImageDraw.Draw(img)
             
             try:
-                # 备用方案：如果字体文件丢失，使用默认字体防止程序崩掉
                 if not os.path.exists(self.font_path):
                     font_load = ImageFont.load_default()
                     fonts = {k: font_load for k in ['header', 'update', 'date', 'time', 'tag', 'name', 'title']}
