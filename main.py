@@ -7,7 +7,7 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api.all import *
 
-@register("asoul_calendar", "awslYui", "A-SOUL 日程", "1.3")
+@register("asoul_calendar", "awslYui", "A-SOUL 日程", "1.4")
 class CalendarPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -29,19 +29,29 @@ class CalendarPlugin(Star):
             print(f"[asoul_calendar] 自动任务注册失败: {e}")
 
     def parse_summary_v3(self, text):
-        types = ["突击", "2D", "日常", "节目"]
-        found_tag, found_name, found_title = "日常", "团播/夜谈", text
-        match = re.search(r"^【(.*?)】(.*?)[:：]\s*(.*)", text)
+        """解析 SUMMARY 获取标签、成员名和标题"""
+        types = ["突击", "2D", "日常", "节目", "线下", "3D"]
+        found_tag, found_name, found_title = "日常", "团播", text
+        # 匹配格式: 【标签】名称: 标题 或 【标签】名称
+        match = re.search(r"^【(.*?)】(.*?)([:：]\s*(.*))?$", text)
         if match:
-            raw_tag, name_part, found_title = match.group(1), match.group(2), match.group(3)
+            raw_tag, name_part, _, title_part = match.groups()
             for t in types:
                 if t in raw_tag: found_tag = t
-            found_name = name_part.replace("突击", "").replace("日常", "").strip()
+            found_name = name_part.replace("突击", "").replace("直播", "").strip()
+            found_title = title_part.strip() if title_part else name_part
         return found_tag, found_name, found_title
+
+    def get_core_title(self, title):
+        """提取核心标题内容，用于识别跨日期的改期"""
+        # 去除前缀和常见后缀
+        core = re.sub(r"【.*?】", "", title)
+        core = re.sub(r"(\d+年\d+月\d+日.*场)", "", core)
+        return core.strip()
 
     def parse_ics_to_dict(self, text):
         events_dict = {}
-        # 预处理：修复换行导致的字段中断
+        # 预处理：修复换行导致的字段中断 [cite: 1]
         text = re.sub(r'\r?\n\s', '', text) 
         vevent_blocks = re.findall(r"BEGIN:VEVENT(.*?)END:VEVENT", text, re.S)
         for block in vevent_blocks:
@@ -50,7 +60,6 @@ class CalendarPlugin(Star):
             start_m = re.search(r"^DTSTART:(.*?)$", block, re.M)
             stamp_m = re.search(r"^DTSTAMP:(.*?)$", block, re.M)
             url_m = re.search(r"^URL:(.*?)$", block, re.M)
-            desc_m = re.search(r"^DESCRIPTION:(.*?)$", block, re.M)
 
             if not uid_m or not start_m: continue
             
@@ -59,25 +68,17 @@ class CalendarPlugin(Star):
             t_start = start_m.group(1).strip()
             t_stamp = stamp_m.group(1).strip() if stamp_m else "0"
             actual_url = url_m.group(1).strip() if url_m else ""
-            desc_text = desc_m.group(1).strip() if desc_m else ""
 
-            # 核心：提取动态 ID (Opus ID) 用于识别调整
-            # 兼容 SUMMARY 和 DESCRIPTION 两个位置
-            opus_id = ""
-            opus_match = re.search(r"opus/(\d+)", desc_text + sum_text)
-            if opus_match:
-                opus_id = opus_match.group(1)
-            
             tag, name, title = self.parse_summary_v3(sum_text)
             try:
                 t_str = t_start.replace('Z', '')[:15]
+                # 转换为北京时间 [cite: 1]
                 bj_dt = datetime.strptime(t_str, "%Y%m%dT%H%M%S") + timedelta(hours=8)
                 events_dict[u_id] = {
                     "uid": u_id, 
                     "stamp": t_stamp,
                     "time": bj_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                    "tag": tag, "name": name, "title": title, "url": actual_url,
-                    "opus_id": opus_id
+                    "tag": tag, "name": name, "title": title, "url": actual_url
                 }
             except: continue
         return events_dict
@@ -95,7 +96,6 @@ class CalendarPlugin(Star):
         COL_W = 240
         is_canceled = ev.get("canceled", False)
         
-        # 视觉效果：已失效则使用灰色调
         m_clr = "#DCDFE6" if is_canceled else self.get_color(ev["url"])
         txt_main = "#909399" if is_canceled else "#FFFFFF"
         
@@ -103,15 +103,12 @@ class CalendarPlugin(Star):
         draw.text((x, y), datetime.strptime(ev["time"], "%Y-%m-%d %H:%M:%S").strftime('%H:%M'), fill="#99A2AA", font=fonts['time'])
         
         title = ev["title"]
-        if len(title) > 33: title = title[:32] + "..."
         lines = [title[i:i+9] for i in range(0, len(title), 9)][:3]
         card_h = 85 + (len(lines) - 1) * 25
         y_c = y + 35
         
-        # 绘制卡片主体
         draw.rounded_rectangle([x, y_c, x + COL_W - 30, y_c + card_h], radius=15, fill=m_clr)
         
-        # 绘制 Tag 半透明背景
         tag_canvas = PILImage.new('RGBA', base_img.size, (255, 255, 255, 0))
         tag_draw = ImageDraw.Draw(tag_canvas)
         tag_draw.rounded_rectangle([x+10, y_c+15, x+65, y_c+43], radius=8, fill=(255, 255, 255, 60))
@@ -122,7 +119,6 @@ class CalendarPlugin(Star):
         for i, line in enumerate(lines):
             draw.text((x + 10, y_c + 50 + i * 25), line, fill=txt_main, font=fonts['title'])
             
-        # 如果是被取消或调整过的，画中划线
         if is_canceled:
             line_y = y_c + card_h // 2 + 5
             draw.line([x + 10, line_y, x + COL_W - 40, line_y], fill="#717375", width=3)
@@ -141,31 +137,36 @@ class CalendarPlugin(Star):
                 all_evs.update(new_evs)
                 self.save_events(all_evs)
                 
-                # --- 核心：多重冲突识别逻辑 ---
+                # --- 优化后的冲突过滤逻辑 ---
                 render_list = list(all_evs.values())
                 for ev in render_list: ev["canceled"] = False
+                
+                # 按时间戳排序，确保晚发布的信息能覆盖旧信息
+                render_list.sort(key=lambda x: x["stamp"])
 
-                # 1. 识别 Opus ID (动态ID) 冲突
-                # 如果多个 VEVENT 共享同一个 Opus ID，保留 DTSTAMP 最晚的
-                opus_map = {}
+                # 1. 内容去重 (解决改期问题)
+                content_map = {}
                 for idx, ev in enumerate(render_list):
-                    oid = ev.get("opus_id")
-                    if oid:
-                        if oid not in opus_map:
-                            opus_map[oid] = idx
-                        else:
-                            old_idx = opus_map[oid]
-                            if render_list[idx]["stamp"] >= render_list[old_idx]["stamp"]:
-                                render_list[old_idx]["canceled"] = True
-                                opus_map[oid] = idx
-                            else:
-                                render_list[idx]["canceled"] = True
+                    core = self.get_core_title(ev["title"])
+                    content_key = f"{ev['name']}_{core}"
+                    if content_key in content_map:
+                        render_list[content_map[content_key]]["canceled"] = True
+                    content_map[content_key] = idx
+
+                # 2. 档期覆盖 (解决同一时间换内容问题)
+                slot_map = {}
+                for idx, ev in enumerate(render_list):
+                    if ev["canceled"]: continue
+                    slot_key = f"{ev['name']}_{ev['time']}"
+                    if slot_key in slot_map:
+                        render_list[slot_map[slot_key]]["canceled"] = True
+                    slot_map[slot_key] = idx
 
             except Exception as e:
                 print(f"[asoul_calendar] 更新出错: {e}")
                 return None
             
-            # --- 绘图初始化 ---
+            # --- 绘图逻辑 ---
             today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             start_w = (today - timedelta(days=today.weekday())) + timedelta(weeks=week_offset)
             
@@ -175,21 +176,20 @@ class CalendarPlugin(Star):
                 diff = (ev_dt.date() - start_w.date()).days
                 if 0 <= diff <= 6: w_data[diff].append(e)
 
-            # 按时间排序每一天内的日程
             for i in range(7):
                 w_data[i].sort(key=lambda x: x["time"])
 
             CW, MT = 260, 180
-            # 估算高度
             day_heights = []
             for i in range(7):
-                h = sum([ (85 + (len([ev["title"][k:k+9] for k in range(0, len(ev["title"]), 9)][:3]) - 1) * 25 + 55) for ev in w_data[i]])
+                h = sum([(85 + (len([ev["title"][k:k+9] for k in range(0, len(ev["title"]), 9)][:3]) - 1) * 25 + 55) for ev in w_data[i]])
                 day_heights.append(h)
             
-            img_h = MT + (max(day_heights) if day_heights else 100) + 80
+            img_h = max(MT + max(day_heights if day_heights else [100]) + 80, 600)
             img = PILImage.new('RGB', (CW * 7 + 80, int(img_h)), color="#F4F5F7")
             draw = ImageDraw.Draw(img)
             
+            # 字体加载
             try:
                 if not os.path.exists(self.font_path):
                     font_load = ImageFont.load_default()
@@ -206,7 +206,7 @@ class CalendarPlugin(Star):
                     }
             except: return None
 
-            # 绘制头部
+            # 绘制页眉
             header_text = "本 周 日 程" if week_offset == 0 else "下 周 日 程"
             draw.text((CW*3.5-120, 50), header_text, fill="#222222", font=fonts['header'])
             update_str = f"更新于: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
@@ -241,13 +241,9 @@ class CalendarPlugin(Star):
     @filter.command("日程表")
     async def send_calendar(self, event: AstrMessageEvent, week_type: str = "本周"):
         offset = 1 if week_type == "下周" else 0
-        suffix = "this" if offset == 0 else "next"
-        target_path = os.path.join(self.data_dir, f"schedule_{suffix}.png")
-        
-        # 总是触发一次更新以保证准确性，如果网络慢可按需改为直接读取
         path = await self.update_calendar_image(offset)
         if path: yield event.image_result(path)
-        else: yield event.plain_result("日程表生成失败，请检查网络或日志。")
+        else: yield event.plain_result("日程表生成失败。")
 
     @filter.command("更新日程表")
     async def force_update(self, event: AstrMessageEvent):
