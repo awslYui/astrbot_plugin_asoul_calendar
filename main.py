@@ -17,19 +17,16 @@ class CalendarPlugin(Star):
         self.cache_path = os.path.join(self.data_dir, "asoul_events_cache.json")
         self.font_path = os.path.join(os.path.dirname(__file__), "msyh.ttf")
         
-        # 定义异步包装函数，确保传入 register_task 的是协程对象
         async def update_this_week(): 
             await self.update_calendar_image(0)
             
         async def update_next_week(): 
             await self.update_calendar_image(1)
         
-        # 兼容性写法：直接尝试注册任务
         try:
             self.context.register_task("0 */12 * * *", update_this_week)
             self.context.register_task("5 */12 * * *", update_next_week)
         except Exception as e:
-            # 防止因框架版本极其特殊导致的二次崩溃
             print(f"[asoul_calendar] 自动任务注册失败: {e}")
 
     def parse_summary_v3(self, text):
@@ -48,14 +45,17 @@ class CalendarPlugin(Star):
         text = re.sub(r'\r?\n\s', '', text) 
         vevent_blocks = re.findall(r"BEGIN:VEVENT(.*?)END:VEVENT", text, re.S)
         for block in vevent_blocks:
-            uid = re.search(r"^UID:(.*?)$", block, re.M)
-            summary = re.search(r"^SUMMARY:(.*?)$", block, re.M)
-            dtstart = re.search(r"^DTSTART:(.*?)$", block, re.M)
-            url_field = re.search(r"^URL:(.*?)$", block, re.M)
-            u_id = uid.group(1).strip() if uid else None
-            sum_text = summary.group(1).strip() if summary else ""
-            t_start = dtstart.group(1).strip() if dtstart else None
-            actual_url = url_field.group(1).strip() if url_field else ""
+            # 【修改点1】使用 findall 并取最后一个元素 [-1]，有效避免嵌套/脏数据导致的解析错位
+            uids = re.findall(r"^UID:(.*?)$", block, re.M)
+            summaries = re.findall(r"^SUMMARY:(.*?)$", block, re.M)
+            dtstarts = re.findall(r"^DTSTART:(.*?)$", block, re.M)
+            urls = re.findall(r"^URL:(.*?)$", block, re.M)
+            
+            u_id = uids[-1].strip() if uids else None
+            sum_text = summaries[-1].strip() if summaries else ""
+            t_start = dtstarts[-1].strip() if dtstarts else None
+            actual_url = urls[-1].strip() if urls else ""
+            
             if not u_id or not t_start: continue
             tag, name, title = self.parse_summary_v3(sum_text)
             try:
@@ -86,8 +86,11 @@ class CalendarPlugin(Star):
         lines = [title[i:i+9] for i in range(0, len(title), 9)][:3]
         card_h = 85 + (len(lines) - 1) * 25
         y_c = y + 35
+        
+        # 这里的绘图逻辑无需大改，它已经具备了识别 canceled 并变灰划线的逻辑
         is_canceled = ev.get("canceled", False)
         m_clr = "#E0E0E0" if is_canceled else self.get_color(ev["url"])
+        
         draw.rounded_rectangle([x, y_c, x + COL_W - 30, y_c + card_h], radius=15, fill=m_clr)
         tag_canvas = PILImage.new('RGBA', base_img.size, (255, 255, 255, 0))
         tag_draw = ImageDraw.Draw(tag_canvas)
@@ -97,6 +100,7 @@ class CalendarPlugin(Star):
         draw.text((x + 75, y_c + 16), ev["name"], fill="#FFFFFF", font=fonts['name'])
         for i, line in enumerate(lines):
             draw.text((x + 10, y_c + 50 + i * 25), line, fill="#FFFFFF", font=fonts['title'])
+            
         if is_canceled:
             line_y_mid = y_c + card_h // 2
             draw.line([x + 10, line_y_mid, x + COL_W - 40, line_y_mid], fill="#444444", width=3)
@@ -111,16 +115,36 @@ class CalendarPlugin(Star):
                 resp = await client.get(self.url, timeout=15)
                 new_evs = self.parse_ics_to_dict(resp.text)
                 all_evs = self.load_cached_events()
-                all_evs.update(new_evs)
+                
+                # 【修改点2】利用“缓存差异分析”替代原来粗糙的 for 循环对比
+                fresh_uids = set(new_evs.keys())
+                
+                # 1. 刷新最新抓取到的事件状态，它们是有效的
+                for uid, ev in new_evs.items():
+                    ev["canceled"] = False 
+                    all_evs[uid] = ev
+                    
+                # 2. 检查缓存。如果缓存中有事件，但最新的日历里被删除了，说明被官方取消/移期了
+                for uid, ev in all_evs.items():
+                    if uid not in fresh_uids:
+                        ev["canceled"] = True
+                
+                # 3. 简单的缓存清理，防止长期运行导致 cache 文件无限膨胀（保留最近30天即可）
+                now_time = datetime.now()
+                keys_to_del = []
+                for uid, ev in all_evs.items():
+                    try:
+                        ev_dt = datetime.strptime(ev["time"], "%Y-%m-%d %H:%M:%S")
+                        if (now_time - ev_dt).days > 30:
+                            keys_to_del.append(uid)
+                    except: pass
+                for k in keys_to_del: 
+                    del all_evs[k]
+
                 self.save_events(all_evs)
                 render_list = list(all_evs.values())
                 render_list.sort(key=lambda x: x["time"])
-                for i in range(len(render_list)):
-                    render_list[i]["canceled"] = False
-                    for j in range(i + 1, len(render_list)):
-                        if render_list[i]["title"] == render_list[j]["title"] and \
-                           render_list[i]["time"][:10] == render_list[j]["time"][:10]:
-                            render_list[i]["canceled"] = True
+                
             except Exception as e:
                 print(f"[asoul_calendar] 更新出错: {e}")
                 return None
