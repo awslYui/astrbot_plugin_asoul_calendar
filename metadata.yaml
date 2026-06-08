@@ -1,5 +1,5 @@
-name: asoul_calendar
-description: 每12小时自动更新 A-SOUL 直播日程并生成周日历图片。
-version: 1.0
+name: zhijiang_calendar
+description: 枝江直播日程表 - 每6小时自动拉取 asoul.love 日程数据，通过 /日程表 指令生成并发送周视图日程图片。
+version: 2.0
 author: awslYui
 repo: https://github.com/awslYui/astrbot_plugin_asoul_calendar
