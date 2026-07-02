@@ -1,4 +1,4 @@
-name: “zhijiang_calendar”
+name: “astrbot_plugin_zhijiang_calendar”
 description: “枝江直播日程表 - 每6小时自动拉取 asoul.love 日程数据，通过 /日程表 指令生成并发送周视图日程图片。”
 version: “1.0”
 author: “awslYui”
