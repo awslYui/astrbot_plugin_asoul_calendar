@@ -37,11 +37,16 @@ class CalendarPlugin(Star):
                 "已搜索路径: " + ", ".join(font_candidates)
             )
 
-        # 每6小时自动更新缓存
-        try:
-            self.context.register_task("0 */6 * * *", self._auto_update)
-        except Exception as e:
-            print(f"[zhijiang_calendar] 自动任务注册失败: {e}")
+        self._task_registered = False
+
+    async def _ensure_task_registered(self):
+        """确保定时任务已注册（延迟注册，避免启动时事件循环未就绪）"""
+        if not self._task_registered:
+            try:
+                self.context.register_task("0 */6 * * *", self._auto_update)
+                self._task_registered = True
+            except Exception as e:
+                print(f"[zhijiang_calendar] 自动任务注册失败: {e}")
 
     # ==================== 自动更新 ====================
 
@@ -253,6 +258,7 @@ class CalendarPlugin(Star):
     @filter.command("日程表")
     async def cmd_weekly(self, event: AstrMessageEvent):
         """发送本周枝江直播日程表图片"""
+        await self._ensure_task_registered()
         path = await self._render_weekly_image()
         if path:
             yield event.image_result(path)
