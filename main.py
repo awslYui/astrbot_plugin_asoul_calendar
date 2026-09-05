@@ -4,7 +4,7 @@ import httpx
 import json
 import os
 import re
-from PIL import Image as PILImage, ImageChops, ImageDraw, ImageFont, ImageOps
+from PIL import Image as PILImage, ImageDraw, ImageFont
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from astrbot.api.event import filter, AstrMessageEvent
@@ -20,11 +20,6 @@ class CalendarPlugin(Star):
         self.data_dir = "data/zhijiang_calendar"
         os.makedirs(self.data_dir, exist_ok=True)
         self.cache_path = os.path.join(self.data_dir, "events_cache.json")
-        assets_dir = os.path.join(os.path.dirname(__file__), "assets")
-        self.photo_paths = [
-            os.path.join(assets_dir, "jiaran.webp")
-        ]
-        self._jiaRan_photos: list[PILImage.Image] | None = None
 
         # 字体路径：优先使用插件目录下的 msyh.ttf
         font_candidates = [
@@ -233,60 +228,27 @@ class CalendarPlugin(Star):
         os.replace(temp_path, path)
         return path
 
-    def _load_jiaRan_photos(self) -> list[PILImage.Image]:
-        """加载四组嘉然装饰图，缺失时回退为无插画布局。"""
-        cached_photos = getattr(self, "_jiaRan_photos", None)
-        if cached_photos is not None:
-            return cached_photos
+    def _load_background(self, size: tuple[int, int]) -> PILImage.Image:
+        """加载用户提供的原图背景；仅按尺寸裁切缩放，不做模糊处理。"""
+        background_path = os.path.join(
+            os.path.dirname(__file__), "calendar_background.png"
+        )
         try:
-            photo_paths = getattr(self, "photo_paths", [
-                os.path.join(os.path.dirname(__file__), "assets", "jiaran.webp")
-            ])
-            self._jiaRan_photos = [
-                PILImage.open(path).convert("RGBA")
-                for path in photo_paths
-            ]
+            background = PILImage.open(background_path).convert("RGBA")
         except OSError:
-            self._jiaRan_photos = []
-        return self._jiaRan_photos
+            return PILImage.new("RGBA", size, "#FFF5F7")
 
-    def _paste_jiaRan_photo(
-        self, base_img: PILImage.Image, box: tuple[int, int, int, int],
-        index: int = 0, opacity: int = 92,
-        fade_bottom_from: float | None = None,
-    ) -> bool:
-        """将一组嘉然装饰图以保留透明边缘的方式贴入指定区域。"""
-        photos = self._load_jiaRan_photos()
-        if not photos:
-            return False
-        photo = photos[index % len(photos)].copy()
-
-        width = box[2] - box[0]
-        height = box[3] - box[1]
-        photo.thumbnail((width, height), PILImage.Resampling.LANCZOS)
-        canvas = PILImage.new("RGBA", (width, height))
-        canvas.paste(
-            photo,
-            ((width - photo.width) // 2, (height - photo.height) // 2),
-            photo,
+        scale = max(size[0] / background.width, size[1] / background.height)
+        resized = background.resize(
+            (
+                max(1, round(background.width * scale)),
+                max(1, round(background.height * scale)),
+            ),
+            PILImage.Resampling.LANCZOS,
         )
-        alpha = canvas.getchannel("A").point(
-            lambda value: value * opacity // 255
-        )
-        if fade_bottom_from is not None:
-            fade_start = int(height * fade_bottom_from)
-            fade_mask = PILImage.new("L", (width, height), 255)
-            fade_draw = ImageDraw.Draw(fade_mask)
-            fade_span = max(1, height - fade_start)
-            for y in range(fade_start, height):
-                fade_draw.line(
-                    (0, y, width, y),
-                    fill=max(0, 255 - (y - fade_start) * 255 // fade_span),
-                )
-            alpha = ImageChops.multiply(alpha, fade_mask)
-        canvas.putalpha(alpha)
-        base_img.paste(canvas, box[:2], canvas)
-        return True
+        left = max(0, (resized.width - size[0]) // 2)
+        top = max(0, (resized.height - size[1]) // 2)
+        return resized.crop((left, top, left + size[0], top + size[1]))
 
     def _render_today_image(self, events: list, today: datetime) -> str:
         """渲染适合 QQ 聊天气泡直接阅读的今日大字版。"""
@@ -302,7 +264,7 @@ class CalendarPlugin(Star):
         img_w = 1080
         margin = 54
         gap = 22
-        header_h = 370
+        header_h = 500
         fonts = {
             "header": ImageFont.truetype(self.font_path, 58),
             "date": ImageFont.truetype(self.font_path, 30),
@@ -323,13 +285,8 @@ class CalendarPlugin(Star):
         content_h += max(0, len(card_specs) - 1) * gap
         img_h = max(560, header_h + content_h + 110)
 
-        img = PILImage.new("RGBA", (img_w, img_h), "#FFF5F7")
+        img = self._load_background((img_w, img_h))
         draw = ImageDraw.Draw(img)
-        # 人物纵向贯穿画面，脸部露出在卡片上方，下半身柔和融入背景。
-        self._paste_jiaRan_photo(
-            img, (-210, -170, 1290, img_h - 56), index=0, opacity=255,
-            fade_bottom_from=0.46,
-        )
         weekdays = "一二三四五六日"
 
         draw.text((margin, 48), "今日直播", fill="#D94F83", font=fonts["header"])
@@ -440,9 +397,9 @@ class CalendarPlugin(Star):
 
         col_w = 300
         margin = 54
-        header_h = 430
-        panel_top = 408
-        card_top = 535
+        header_h = 760
+        panel_top = 690
+        card_top = 820
         img_w = col_w * 7 + margin * 2
         fonts = {
             "header": ImageFont.truetype(self.font_path, 58),
@@ -471,14 +428,9 @@ class CalendarPlugin(Star):
             ),
             default=0,
         )
-        img_h = max(header_h + tallest_column + 150, 680)
-        img = PILImage.new("RGBA", (img_w, img_h), "#FFF5F7")
+        img_h = max(header_h + tallest_column + 150, 1030)
+        img = self._load_background((img_w, img_h))
         draw = ImageDraw.Draw(img)
-        # 人物纵向贯穿画面，脸部露出在七列卡片上方，下半身渐隐。
-        self._paste_jiaRan_photo(
-            img, (-110, -225, img_w + 110, img_h + 20),
-            index=0, opacity=255, fade_bottom_from=0.45,
-        )
 
         draw.text((margin, 46), "枝江 · 本周日程", fill="#D94F83", font=fonts["header"])
         week_end = week_start + timedelta(days=6)
