@@ -4,7 +4,7 @@ import httpx
 import json
 import os
 import re
-from PIL import Image as PILImage, ImageDraw, ImageFont
+from PIL import Image as PILImage, ImageChops, ImageDraw, ImageFont, ImageOps
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from astrbot.api.event import filter, AstrMessageEvent
@@ -12,7 +12,7 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api.all import *
 
 
-@register("zhijiang_calendar", "awslYui", "枝江日程表", "2.2.1")
+@register("zhijiang_calendar", "awslYui", "枝江日程表", "2.3.0")
 class CalendarPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -20,6 +20,11 @@ class CalendarPlugin(Star):
         self.data_dir = "data/zhijiang_calendar"
         os.makedirs(self.data_dir, exist_ok=True)
         self.cache_path = os.path.join(self.data_dir, "events_cache.json")
+        assets_dir = os.path.join(os.path.dirname(__file__), "assets")
+        self.photo_paths = [
+            os.path.join(assets_dir, "jiaran.webp")
+        ]
+        self._jiaRan_photos: list[PILImage.Image] | None = None
 
         # 字体路径：优先使用插件目录下的 msyh.ttf
         font_candidates = [
@@ -228,6 +233,61 @@ class CalendarPlugin(Star):
         os.replace(temp_path, path)
         return path
 
+    def _load_jiaRan_photos(self) -> list[PILImage.Image]:
+        """加载四组嘉然装饰图，缺失时回退为无插画布局。"""
+        cached_photos = getattr(self, "_jiaRan_photos", None)
+        if cached_photos is not None:
+            return cached_photos
+        try:
+            photo_paths = getattr(self, "photo_paths", [
+                os.path.join(os.path.dirname(__file__), "assets", "jiaran.webp")
+            ])
+            self._jiaRan_photos = [
+                PILImage.open(path).convert("RGBA")
+                for path in photo_paths
+            ]
+        except OSError:
+            self._jiaRan_photos = []
+        return self._jiaRan_photos
+
+    def _paste_jiaRan_photo(
+        self, base_img: PILImage.Image, box: tuple[int, int, int, int],
+        index: int = 0, opacity: int = 92,
+        fade_bottom_from: float | None = None,
+    ) -> bool:
+        """将一组嘉然装饰图以保留透明边缘的方式贴入指定区域。"""
+        photos = self._load_jiaRan_photos()
+        if not photos:
+            return False
+        photo = photos[index % len(photos)].copy()
+
+        width = box[2] - box[0]
+        height = box[3] - box[1]
+        photo.thumbnail((width, height), PILImage.Resampling.LANCZOS)
+        canvas = PILImage.new("RGBA", (width, height))
+        canvas.paste(
+            photo,
+            ((width - photo.width) // 2, (height - photo.height) // 2),
+            photo,
+        )
+        alpha = canvas.getchannel("A").point(
+            lambda value: value * opacity // 255
+        )
+        if fade_bottom_from is not None:
+            fade_start = int(height * fade_bottom_from)
+            fade_mask = PILImage.new("L", (width, height), 255)
+            fade_draw = ImageDraw.Draw(fade_mask)
+            fade_span = max(1, height - fade_start)
+            for y in range(fade_start, height):
+                fade_draw.line(
+                    (0, y, width, y),
+                    fill=max(0, 255 - (y - fade_start) * 255 // fade_span),
+                )
+            alpha = ImageChops.multiply(alpha, fade_mask)
+        canvas.putalpha(alpha)
+        base_img.paste(canvas, box[:2], canvas)
+        return True
+
     def _render_today_image(self, events: list, today: datetime) -> str:
         """渲染适合 QQ 聊天气泡直接阅读的今日大字版。"""
         today_events = []
@@ -242,7 +302,7 @@ class CalendarPlugin(Star):
         img_w = 1080
         margin = 54
         gap = 22
-        header_h = 210
+        header_h = 370
         fonts = {
             "header": ImageFont.truetype(self.font_path, 58),
             "date": ImageFont.truetype(self.font_path, 30),
@@ -263,8 +323,13 @@ class CalendarPlugin(Star):
         content_h += max(0, len(card_specs) - 1) * gap
         img_h = max(560, header_h + content_h + 110)
 
-        img = PILImage.new("RGB", (img_w, img_h), "#FFF5F7")
+        img = PILImage.new("RGBA", (img_w, img_h), "#FFF5F7")
         draw = ImageDraw.Draw(img)
+        # 人物纵向贯穿画面，脸部露出在卡片上方，下半身柔和融入背景。
+        self._paste_jiaRan_photo(
+            img, (-210, -170, 1290, img_h - 56), index=0, opacity=255,
+            fade_bottom_from=0.46,
+        )
         weekdays = "一二三四五六日"
 
         draw.text((margin, 48), "今日直播", fill="#D94F83", font=fonts["header"])
@@ -274,7 +339,7 @@ class CalendarPlugin(Star):
         )
         draw.text((margin, 126), date_text, fill="#666666", font=fonts["date"])
         draw.text(
-            (img_w - 260, 138),
+            (img_w - 238, 148),
             f"更新于 {self._now_bj():%H:%M}",
             fill="#AAAAAA",
             font=fonts["footer"],
@@ -290,7 +355,8 @@ class CalendarPlugin(Star):
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
             draw.text(
-                ((img_w - text_w) / 2, header_h + (box[3] - header_h - text_h) / 2),
+                ((img_w - text_w) / 2,
+                 header_h + (box[3] - header_h - text_h) / 2),
                 message,
                 fill="#AAAAAA",
                 font=fonts["empty"],
@@ -306,7 +372,7 @@ class CalendarPlugin(Star):
                 draw.rounded_rectangle(
                     [margin, y, img_w - margin, y + card_h],
                     radius=26,
-                    fill=card_fill,
+                    fill=(250, 250, 250, 226) if ended else (255, 255, 255, 222),
                     outline="#EFDCE2",
                     width=2,
                 )
@@ -374,7 +440,9 @@ class CalendarPlugin(Star):
 
         col_w = 300
         margin = 54
-        header_h = 210
+        header_h = 430
+        panel_top = 408
+        card_top = 535
         img_w = col_w * 7 + margin * 2
         fonts = {
             "header": ImageFont.truetype(self.font_path, 58),
@@ -404,8 +472,13 @@ class CalendarPlugin(Star):
             default=0,
         )
         img_h = max(header_h + tallest_column + 150, 680)
-        img = PILImage.new("RGB", (img_w, img_h), "#FFF5F7")
+        img = PILImage.new("RGBA", (img_w, img_h), "#FFF5F7")
         draw = ImageDraw.Draw(img)
+        # 人物纵向贯穿画面，脸部露出在七列卡片上方，下半身渐隐。
+        self._paste_jiaRan_photo(
+            img, (-110, -225, img_w + 110, img_h + 20),
+            index=0, opacity=255, fade_bottom_from=0.45,
+        )
 
         draw.text((margin, 46), "枝江 · 本周日程", fill="#D94F83", font=fonts["header"])
         week_end = week_start + timedelta(days=6)
@@ -416,7 +489,7 @@ class CalendarPlugin(Star):
             font=fonts["range"],
         )
         draw.text(
-            (img_w - 245, 140),
+            (img_w - 260, 150),
             f"更新于 {self._now_bj():%H:%M}",
             fill="#AAAAAA",
             font=fonts["footer"],
@@ -432,39 +505,40 @@ class CalendarPlugin(Star):
             outline = "#E799B0" if is_today else "#EEDCE2"
 
             draw.rounded_rectangle(
-                [x, 188, x + col_w - 18, img_h - 50],
+                [x, panel_top, x + col_w - 18, img_h - 50],
                 radius=20,
-                fill=panel_fill,
+                fill=(255, 240, 244, 224) if is_today else (255, 249, 250, 220),
                 outline=outline,
                 width=4 if is_today else 2,
             )
             draw.text(
-                (x + 20, 215),
+                (x + 20, panel_top + 27),
                 weekdays[day_index],
                 fill="#D94F83" if is_today else "#666666",
                 font=fonts["day"],
             )
             draw.text(
-                (x + 20, 258),
+                (x + 20, panel_top + 70),
                 curr_day.strftime("%m.%d"),
                 fill="#999999",
                 font=fonts["range"],
             )
             if is_today:
                 draw.rounded_rectangle(
-                    [x + col_w - 95, 216, x + col_w - 38, 251],
+                    [x + col_w - 95, panel_top + 28,
+                     x + col_w - 38, panel_top + 63],
                     radius=9,
                     fill="#E799B0",
                 )
                 draw.text(
-                    (x + col_w - 84, 219),
+                    (x + col_w - 84, panel_top + 31),
                     "今天",
                     fill="#FFFFFF",
                     font=fonts["meta"],
                 )
 
             cards = card_specs[day_index]
-            card_y = 315
+            card_y = card_top
             if not cards:
                 draw.text(
                     (x + 22, card_y + 50),
@@ -480,7 +554,7 @@ class CalendarPlugin(Star):
                 draw.rounded_rectangle(
                     [x + 14, card_y, x + col_w - 32, card_y + card_h],
                     radius=16,
-                    fill="#F8F8F8" if ended else "#FFFFFF",
+                    fill=(248, 248, 248, 224) if ended else (255, 255, 255, 222),
                 )
                 draw.rounded_rectangle(
                     [x + 14, card_y, x + 23, card_y + card_h],

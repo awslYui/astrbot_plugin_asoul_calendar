@@ -1,6 +1,6 @@
 name: "astrbot_plugin_zhijiang_calendar"
 display_name: "枝江日程表"
-desc: "生成今日日程大字卡片和横向本周周历，并保留本周已结束的历史日程。"
-version: "2.2.1"
+desc: "生成带嘉然主题背景的今日日程和横向本周周历，并保留本周历史日程。"
+version: "2.3.0"
 author: "awslYui"
 repo: "https://github.com/awslYui/astrbot_plugin_asoul_calendar"
