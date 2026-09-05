@@ -248,7 +248,10 @@ class CalendarPlugin(Star):
         )
         left = max(0, (resized.width - size[0]) // 2)
         top = max(0, (resized.height - size[1]) // 2)
-        return resized.crop((left, top, left + size[0], top + size[1]))
+        cropped = resized.crop((left, top, left + size[0], top + size[1]))
+        # 轻薄粉色蒙版降低背景存在感，不做模糊，人物细节仍保留。
+        veil = PILImage.new("RGBA", size, (255, 238, 244, 42))
+        return PILImage.alpha_composite(cropped, veil)
 
     def _render_today_image(self, events: list, today: datetime) -> str:
         """渲染适合 QQ 聊天气泡直接阅读的今日大字版。"""
@@ -294,10 +297,7 @@ class CalendarPlugin(Star):
             [margin - 18, 30, margin + 420, 190],
             radius=24, fill=(255, 255, 255, 224),
         )
-        draw.rounded_rectangle(
-            [img_w - 270, 132, img_w - 42, 190],
-            radius=18, fill=(255, 255, 255, 214),
-        )
+        # 更新时间采用轻量文字标记，避免额外白色卡片打断画面。
         draw.text((margin, 48), "今日直播", fill="#B92761", font=fonts["header"])
         date_text = (
             f"{today.month}月{today.day}日  "
@@ -305,10 +305,12 @@ class CalendarPlugin(Star):
         )
         draw.text((margin, 126), date_text, fill="#3F4147", font=fonts["date"])
         draw.text(
-            (img_w - 248, 148),
-            f"更新于 {self._now_bj():%H:%M}",
-            fill="#6D6E75",
+            (img_w - 250, 58),
+            f"更新 · {self._now_bj():%H:%M}",
+            fill="#9B4165",
             font=fonts["footer"],
+            stroke_width=1,
+            stroke_fill="#FFF8FA",
         )
 
         if not card_specs:
@@ -338,7 +340,7 @@ class CalendarPlugin(Star):
                 draw.rounded_rectangle(
                     [margin, y, img_w - margin, y + card_h],
                     radius=26,
-                    fill=(248, 248, 248, 248) if ended else (255, 255, 255, 246),
+                    fill=(248, 248, 248, 214) if ended else (255, 255, 255, 218),
                     outline="#EFDCE2",
                     width=2,
                 )
@@ -453,21 +455,18 @@ class CalendarPlugin(Star):
             fill="#4E5159", font=fonts["range"],
             stroke_width=1, stroke_fill="#FFF8FA",
         )
-        draw.rounded_rectangle(
-            [img_w - 250, 132, img_w - 42, 184],
-            radius=16, fill=(255, 248, 250, 180),
-        )
         draw.text(
-            (img_w - 230, 146),
-            f"更新于 {self._now_bj():%H:%M}",
-            fill="#666A72", font=fonts["footer"],
+            (img_w - 250, 58),
+            f"更新 · {self._now_bj():%H:%M}",
+            fill="#9B4165", font=fonts["footer"],
+            stroke_width=1, stroke_fill="#FFF8FA",
         )
 
         # 七天共享一块柔和的日历底座，避免七张独立白卡与插画割裂。
         surface = [margin, panel_top, img_w - margin - 18, img_h - 50]
         draw.rounded_rectangle(
-            surface, radius=30, fill=(255, 248, 250, 222),
-            outline=(237, 196, 211, 224), width=2,
+            surface, radius=30, fill=(255, 248, 250, 178),
+            outline=(237, 196, 211, 188), width=2,
         )
         weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
         now = self._now_bj()
@@ -529,7 +528,7 @@ class CalendarPlugin(Star):
                 draw.rounded_rectangle(
                     [x + 14, card_y, x + col_w - 32, card_y + card_h],
                     radius=14,
-                    fill=(250, 250, 251, 232) if ended else (255, 255, 255, 236),
+                    fill=(250, 250, 251, 202) if ended else (255, 255, 255, 208),
                 )
                 draw.rounded_rectangle(
                     [x + 14, card_y, x + 23, card_y + card_h],
