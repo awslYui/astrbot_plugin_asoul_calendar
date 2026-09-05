@@ -289,16 +289,25 @@ class CalendarPlugin(Star):
         draw = ImageDraw.Draw(img)
         weekdays = "一二三四五六日"
 
-        draw.text((margin, 48), "今日直播", fill="#D94F83", font=fonts["header"])
+        # 为标题区铺一层半透明底，背景仍保持原图清晰。
+        draw.rounded_rectangle(
+            [margin - 18, 30, margin + 420, 190],
+            radius=24, fill=(255, 255, 255, 224),
+        )
+        draw.rounded_rectangle(
+            [img_w - 270, 132, img_w - 42, 190],
+            radius=18, fill=(255, 255, 255, 214),
+        )
+        draw.text((margin, 48), "今日直播", fill="#B92761", font=fonts["header"])
         date_text = (
             f"{today.month}月{today.day}日  "
             f"星期{weekdays[today.weekday()]}"
         )
-        draw.text((margin, 126), date_text, fill="#666666", font=fonts["date"])
+        draw.text((margin, 126), date_text, fill="#3F4147", font=fonts["date"])
         draw.text(
-            (img_w - 238, 148),
+            (img_w - 248, 148),
             f"更新于 {self._now_bj():%H:%M}",
-            fill="#AAAAAA",
+            fill="#6D6E75",
             font=fonts["footer"],
         )
 
@@ -329,7 +338,7 @@ class CalendarPlugin(Star):
                 draw.rounded_rectangle(
                     [margin, y, img_w - margin, y + card_h],
                     radius=26,
-                    fill=(250, 250, 250, 226) if ended else (255, 255, 255, 222),
+                    fill=(248, 248, 248, 248) if ended else (255, 255, 255, 246),
                     outline="#EFDCE2",
                     width=2,
                 )
@@ -339,7 +348,7 @@ class CalendarPlugin(Star):
                     fill=color,
                 )
 
-                time_color = "#999999" if ended else color
+                time_color = "#777B84" if ended else "#8F3754"
                 draw.text(
                     (margin + 36, y + 34),
                     ev_dt.strftime("%H:%M"),
@@ -366,7 +375,7 @@ class CalendarPlugin(Star):
                 draw.text(
                     (margin + 330, y + 32),
                     ev.get("name") or "A-SOUL",
-                    fill=color,
+                    fill="#8F3754" if not ended else "#777B84",
                     font=fonts["name"],
                 )
                 for line_index, line in enumerate(lines):
@@ -432,7 +441,16 @@ class CalendarPlugin(Star):
         img = self._load_background((img_w, img_h))
         draw = ImageDraw.Draw(img)
 
-        draw.text((margin, 46), "枝江 · 本周日程", fill="#D94F83", font=fonts["header"])
+        # 标题、日期与更新时间均置于浅色面板，保证复杂背景下的对比度。
+        draw.rounded_rectangle(
+            [margin - 18, 30, margin + 500, 190],
+            radius=24, fill=(255, 255, 255, 224),
+        )
+        draw.rounded_rectangle(
+            [img_w - 284, 132, img_w - 42, 190],
+            radius=18, fill=(255, 255, 255, 214),
+        )
+        draw.text((margin, 46), "枝江 · 本周日程", fill="#B92761", font=fonts["header"])
         week_end = week_start + timedelta(days=6)
         draw.text(
             (margin, 128),
@@ -441,9 +459,9 @@ class CalendarPlugin(Star):
             font=fonts["range"],
         )
         draw.text(
-            (img_w - 260, 150),
+            (img_w - 268, 150),
             f"更新于 {self._now_bj():%H:%M}",
-            fill="#AAAAAA",
+            fill="#6D6E75",
             font=fonts["footer"],
         )
 
@@ -459,20 +477,20 @@ class CalendarPlugin(Star):
             draw.rounded_rectangle(
                 [x, panel_top, x + col_w - 18, img_h - 50],
                 radius=20,
-                fill=(255, 240, 244, 224) if is_today else (255, 249, 250, 220),
+                fill=(255, 240, 244, 248) if is_today else (255, 251, 252, 244),
                 outline=outline,
                 width=4 if is_today else 2,
             )
             draw.text(
                 (x + 20, panel_top + 27),
                 weekdays[day_index],
-                fill="#D94F83" if is_today else "#666666",
+                fill="#B92761" if is_today else "#3F4147",
                 font=fonts["day"],
             )
             draw.text(
                 (x + 20, panel_top + 70),
                 curr_day.strftime("%m.%d"),
-                fill="#999999",
+                fill="#6D6E75",
                 font=fonts["range"],
             )
             if is_today:
@@ -495,7 +513,7 @@ class CalendarPlugin(Star):
                 draw.text(
                     (x + 22, card_y + 50),
                     "暂无日程",
-                    fill="#B5B5B5",
+                    fill="#72757D",
                     font=fonts["empty"],
                 )
 
@@ -506,7 +524,7 @@ class CalendarPlugin(Star):
                 draw.rounded_rectangle(
                     [x + 14, card_y, x + col_w - 32, card_y + card_h],
                     radius=16,
-                    fill=(248, 248, 248, 224) if ended else (255, 255, 255, 222),
+                    fill=(248, 248, 248, 250) if ended else (255, 255, 255, 250),
                 )
                 draw.rounded_rectangle(
                     [x + 14, card_y, x + 23, card_y + card_h],
@@ -516,7 +534,7 @@ class CalendarPlugin(Star):
                 draw.text(
                     (x + 38, card_y + 16),
                     ev_dt.strftime("%H:%M"),
-                    fill="#999999" if ended else color,
+                    fill="#777B84" if ended else "#8F3754",
                     font=fonts["time"],
                 )
 
@@ -531,7 +549,7 @@ class CalendarPlugin(Star):
                 draw.text(
                     (x + 38, card_y + 52),
                     meta,
-                    fill="#999999" if ended else color,
+                    fill="#777B84" if ended else "#8F3754",
                     font=fonts["meta"],
                 )
                 for line_index, line in enumerate(lines):
