@@ -469,8 +469,8 @@ class CalendarPlugin(Star):
         # 七天共享一块柔和的日历底座，避免七张独立白卡与插画割裂。
         surface = [margin, panel_top, img_w - margin - 18, img_h - 50]
         draw.rounded_rectangle(
-            surface, radius=30, fill=(255, 248, 250, 178),
-            outline=(237, 196, 211, 188), width=2,
+            surface, radius=30, fill=(255, 248, 250, 198),
+            outline=(237, 196, 211, 205), width=2,
         )
         weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
         now = self._now_bj()
@@ -532,7 +532,7 @@ class CalendarPlugin(Star):
                 draw.rounded_rectangle(
                     [x + 14, card_y, x + col_w - 32, card_y + card_h],
                     radius=14,
-                    fill=(250, 250, 251, 202) if ended else (255, 255, 255, 208),
+                    fill=(250, 250, 251, 220) if ended else (255, 255, 255, 226),
                 )
                 draw.rounded_rectangle(
                     [x + 14, card_y, x + 23, card_y + card_h],
@@ -542,7 +542,7 @@ class CalendarPlugin(Star):
                 draw.text(
                     (x + 38, card_y + 16),
                     ev_dt.strftime("%H:%M"),
-                    fill="#777B84" if ended else "#8F3754",
+                    fill="#646972" if ended else "#7E2949",
                     font=fonts["time"],
                 )
 
@@ -557,14 +557,14 @@ class CalendarPlugin(Star):
                 draw.text(
                     (x + 38, card_y + 52),
                     meta,
-                    fill="#777B84" if ended else "#8F3754",
+                    fill="#646972" if ended else "#7E2949",
                     font=fonts["meta"],
                 )
                 for line_index, line in enumerate(lines):
                     draw.text(
                         (x + 38, card_y + 83 + line_index * 33),
                         line,
-                        fill="#555555",
+                        fill="#3F4147",
                         font=fonts["title"],
                     )
                 card_y += card_h + 14
