@@ -222,8 +222,10 @@ class CalendarPlugin(Star):
 
     @staticmethod
     def _save_png(image: PILImage.Image, path: str) -> str:
-        """原子保存 PNG，避免发送时读到未写完的图片。"""
+        """原子保存不含透明通道的 PNG，保证 QQ 内外显示颜色一致。"""
         temp_path = path + ".tmp"
+        if image.mode != "RGB":
+            image = image.convert("RGB")
         image.save(temp_path, format="PNG")
         os.replace(temp_path, path)
         return path
@@ -288,8 +290,9 @@ class CalendarPlugin(Star):
         content_h += max(0, len(card_specs) - 1) * gap
         img_h = max(560, header_h + content_h + 110)
 
-        img = self._load_background((img_w, img_h))
-        draw = ImageDraw.Draw(img)
+        # 在不透明背景上混合半透明卡片，避免导出的 PNG 遗留 Alpha 通道。
+        img = self._load_background((img_w, img_h)).convert("RGB")
+        draw = ImageDraw.Draw(img, "RGBA")
         weekdays = "一二三四五六日"
 
         # 为标题区铺一层半透明底，背景仍保持原图清晰。
@@ -440,8 +443,9 @@ class CalendarPlugin(Star):
             default=0,
         )
         img_h = max(header_h + tallest_column + 150, 1030)
-        img = self._load_background((img_w, img_h))
-        draw = ImageDraw.Draw(img)
+        # 在不透明背景上混合半透明卡片，避免导出的 PNG 遗留 Alpha 通道。
+        img = self._load_background((img_w, img_h)).convert("RGB")
+        draw = ImageDraw.Draw(img, "RGBA")
 
         # 标题直接融入背景，用轻描边保证清晰，避免厚重的悬浮白框。
         draw.text(
