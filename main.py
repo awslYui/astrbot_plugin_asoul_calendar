@@ -441,46 +441,51 @@ class CalendarPlugin(Star):
         img = self._load_background((img_w, img_h))
         draw = ImageDraw.Draw(img)
 
-        # 标题、日期与更新时间均置于浅色面板，保证复杂背景下的对比度。
-        draw.rounded_rectangle(
-            [margin - 18, 30, margin + 500, 190],
-            radius=24, fill=(255, 255, 255, 224),
+        # 标题直接融入背景，用轻描边保证清晰，避免厚重的悬浮白框。
+        draw.text(
+            (margin, 46), "枝江 · 本周日程", fill="#B92761",
+            font=fonts["header"], stroke_width=2, stroke_fill="#FFF8FA",
         )
-        draw.rounded_rectangle(
-            [img_w - 284, 132, img_w - 42, 190],
-            radius=18, fill=(255, 255, 255, 214),
-        )
-        draw.text((margin, 46), "枝江 · 本周日程", fill="#B92761", font=fonts["header"])
         week_end = week_start + timedelta(days=6)
         draw.text(
             (margin, 128),
             f"{week_start:%m.%d} — {week_end:%m.%d}",
-            fill="#777777",
-            font=fonts["range"],
+            fill="#4E5159", font=fonts["range"],
+            stroke_width=1, stroke_fill="#FFF8FA",
+        )
+        draw.rounded_rectangle(
+            [img_w - 250, 132, img_w - 42, 184],
+            radius=16, fill=(255, 248, 250, 180),
         )
         draw.text(
-            (img_w - 268, 150),
+            (img_w - 230, 146),
             f"更新于 {self._now_bj():%H:%M}",
-            fill="#6D6E75",
-            font=fonts["footer"],
+            fill="#666A72", font=fonts["footer"],
         )
 
+        # 七天共享一块柔和的日历底座，避免七张独立白卡与插画割裂。
+        surface = [margin, panel_top, img_w - margin - 18, img_h - 50]
+        draw.rounded_rectangle(
+            surface, radius=30, fill=(255, 248, 250, 222),
+            outline=(237, 196, 211, 224), width=2,
+        )
         weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
         now = self._now_bj()
         for day_index in range(7):
             x = margin + day_index * col_w
             curr_day = week_start + timedelta(days=day_index)
             is_today = curr_day.date() == today.date()
-            panel_fill = "#FFF0F4" if is_today else "#FFF9FA"
-            outline = "#E799B0" if is_today else "#EEDCE2"
-
-            draw.rounded_rectangle(
-                [x, panel_top, x + col_w - 18, img_h - 50],
-                radius=20,
-                fill=(255, 240, 244, 248) if is_today else (255, 251, 252, 244),
-                outline=outline,
-                width=4 if is_today else 2,
-            )
+            if day_index:
+                draw.line(
+                    (x - 9, panel_top + 22, x - 9, img_h - 72),
+                    fill=(235, 204, 214, 185), width=2,
+                )
+            if is_today:
+                draw.rounded_rectangle(
+                    [x + 8, panel_top + 10, x + col_w - 28, img_h - 60],
+                    radius=20, fill=(255, 235, 242, 132),
+                    outline="#E799B0", width=3,
+                )
             draw.text(
                 (x + 20, panel_top + 27),
                 weekdays[day_index],
@@ -523,8 +528,8 @@ class CalendarPlugin(Star):
                 ended = ev_dt < now
                 draw.rounded_rectangle(
                     [x + 14, card_y, x + col_w - 32, card_y + card_h],
-                    radius=16,
-                    fill=(248, 248, 248, 250) if ended else (255, 255, 255, 250),
+                    radius=14,
+                    fill=(250, 250, 251, 232) if ended else (255, 255, 255, 236),
                 )
                 draw.rounded_rectangle(
                     [x + 14, card_y, x + 23, card_y + card_h],
