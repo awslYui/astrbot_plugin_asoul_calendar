@@ -12,7 +12,7 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api.all import *
 
 
-@register("zhijiang_calendar", "awslYui", "枝江日程表", "2.2.0")
+@register("zhijiang_calendar", "awslYui", "枝江日程表", "2.2.1")
 class CalendarPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -361,7 +361,7 @@ class CalendarPlugin(Star):
     def _render_weekly_image(
         self, events: list, today: datetime, week_start: datetime
     ) -> str:
-        """渲染双列本周总览，缩略状态下仍保持可读。"""
+        """渲染横向七列本周总览。"""
         week_data = {i: [] for i in range(7)}
         for ev in events:
             try:
@@ -372,60 +372,51 @@ class CalendarPlugin(Star):
             if 0 <= day_diff <= 6:
                 week_data[day_diff].append(ev)
 
-        img_w = 1200
-        margin = 38
-        col_gap = 24
-        row_gap = 24
-        panel_w = (img_w - margin * 2 - col_gap) // 2
-        header_h = 172
+        col_w = 300
+        margin = 54
+        header_h = 210
+        img_w = col_w * 7 + margin * 2
         fonts = {
-            "header": ImageFont.truetype(self.font_path, 50),
-            "range": ImageFont.truetype(self.font_path, 25),
+            "header": ImageFont.truetype(self.font_path, 58),
+            "range": ImageFont.truetype(self.font_path, 28),
             "day": ImageFont.truetype(self.font_path, 30),
-            "time": ImageFont.truetype(self.font_path, 28),
-            "meta": ImageFont.truetype(self.font_path, 23),
-            "title": ImageFont.truetype(self.font_path, 27),
-            "empty": ImageFont.truetype(self.font_path, 25),
+            "time": ImageFont.truetype(self.font_path, 27),
+            "meta": ImageFont.truetype(self.font_path, 20),
+            "title": ImageFont.truetype(self.font_path, 26),
+            "empty": ImageFont.truetype(self.font_path, 23),
             "footer": ImageFont.truetype(self.font_path, 20),
         }
 
-        panel_specs = {}
+        card_specs = {}
         for day_index, day_events in week_data.items():
             cards = []
             for ev in day_events:
-                lines = self._wrap_text(ev.get("title", ""), 14, 2)
-                card_h = 78 + len(lines) * 34
+                lines = self._wrap_text(ev.get("title", ""), 9, 3)
+                card_h = 88 + len(lines) * 33
                 cards.append((ev, lines, card_h))
-            panel_h = max(
-                190,
-                84 + sum(card[2] for card in cards)
-                + max(0, len(cards) - 1) * 12 + 24,
-            )
-            panel_specs[day_index] = (cards, panel_h)
+            card_specs[day_index] = cards
 
-        rows = []
-        for first_day in range(0, 7, 2):
-            second_day = first_day + 1
-            row_h = panel_specs[first_day][1]
-            if second_day < 7:
-                row_h = max(row_h, panel_specs[second_day][1])
-            rows.append((first_day, row_h))
-
-        img_h = header_h + sum(row_h for _, row_h in rows)
-        img_h += row_gap * (len(rows) - 1) + 54
+        tallest_column = max(
+            (
+                sum(card[2] for card in cards) + max(0, len(cards) - 1) * 14
+                for cards in card_specs.values()
+            ),
+            default=0,
+        )
+        img_h = max(header_h + tallest_column + 150, 680)
         img = PILImage.new("RGB", (img_w, img_h), "#FFF5F7")
         draw = ImageDraw.Draw(img)
 
-        draw.text((margin, 34), "枝江 · 本周日程", fill="#D94F83", font=fonts["header"])
+        draw.text((margin, 46), "枝江 · 本周日程", fill="#D94F83", font=fonts["header"])
         week_end = week_start + timedelta(days=6)
         draw.text(
-            (margin, 105),
+            (margin, 128),
             f"{week_start:%m.%d} — {week_end:%m.%d}",
             fill="#777777",
             font=fonts["range"],
         )
         draw.text(
-            (img_w - 236, 112),
+            (img_w - 245, 140),
             f"更新于 {self._now_bj():%H:%M}",
             fill="#AAAAAA",
             font=fonts["footer"],
@@ -433,108 +424,98 @@ class CalendarPlugin(Star):
 
         weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
         now = self._now_bj()
-        y = header_h
-        for first_day, row_h in rows:
-            for column, day_index in enumerate((first_day, first_day + 1)):
-                if day_index >= 7:
-                    continue
+        for day_index in range(7):
+            x = margin + day_index * col_w
+            curr_day = week_start + timedelta(days=day_index)
+            is_today = curr_day.date() == today.date()
+            panel_fill = "#FFF0F4" if is_today else "#FFF9FA"
+            outline = "#E799B0" if is_today else "#EEDCE2"
 
-                x = margin + column * (panel_w + col_gap)
-                curr_day = week_start + timedelta(days=day_index)
-                is_today = curr_day.date() == today.date()
-                panel_fill = "#FFF0F4" if is_today else "#FFF9FA"
-                outline = "#E799B0" if is_today else "#EEDCE2"
+            draw.rounded_rectangle(
+                [x, 188, x + col_w - 18, img_h - 50],
+                radius=20,
+                fill=panel_fill,
+                outline=outline,
+                width=4 if is_today else 2,
+            )
+            draw.text(
+                (x + 20, 215),
+                weekdays[day_index],
+                fill="#D94F83" if is_today else "#666666",
+                font=fonts["day"],
+            )
+            draw.text(
+                (x + 20, 258),
+                curr_day.strftime("%m.%d"),
+                fill="#999999",
+                font=fonts["range"],
+            )
+            if is_today:
                 draw.rounded_rectangle(
-                    [x, y, x + panel_w, y + row_h],
-                    radius=22,
-                    fill=panel_fill,
-                    outline=outline,
-                    width=4 if is_today else 2,
-                )
-
-                draw.text(
-                    (x + 22, y + 20),
-                    weekdays[day_index],
-                    fill="#D94F83" if is_today else "#666666",
-                    font=fonts["day"],
+                    [x + col_w - 95, 216, x + col_w - 38, 251],
+                    radius=9,
+                    fill="#E799B0",
                 )
                 draw.text(
-                    (x + 112, y + 25),
-                    curr_day.strftime("%m.%d"),
-                    fill="#999999",
-                    font=fonts["range"],
+                    (x + col_w - 84, 219),
+                    "今天",
+                    fill="#FFFFFF",
+                    font=fonts["meta"],
                 )
-                if is_today:
-                    draw.rounded_rectangle(
-                        [x + panel_w - 92, y + 22, x + panel_w - 22, y + 58],
-                        radius=10,
-                        fill="#E799B0",
-                    )
-                    draw.text(
-                        (x + panel_w - 79, y + 25),
-                        "今天",
-                        fill="#FFFFFF",
-                        font=fonts["meta"],
-                    )
 
-                cards, _ = panel_specs[day_index]
-                card_y = y + 76
-                if not cards:
-                    draw.text(
-                        (x + 28, card_y + 36),
-                        "暂无日程",
-                        fill="#B5B5B5",
-                        font=fonts["empty"],
-                    )
+            cards = card_specs[day_index]
+            card_y = 315
+            if not cards:
+                draw.text(
+                    (x + 22, card_y + 50),
+                    "暂无日程",
+                    fill="#B5B5B5",
+                    font=fonts["empty"],
+                )
 
-                for ev, lines, card_h in cards:
-                    color = self._get_color(ev.get("url", ""))
-                    ev_dt = datetime.strptime(
-                        ev["time"], "%Y-%m-%d %H:%M:%S"
-                    )
-                    ended = ev_dt < now
-                    card_fill = "#F8F8F8" if ended else "#FFFFFF"
-                    draw.rounded_rectangle(
-                        [x + 16, card_y, x + panel_w - 16, card_y + card_h],
-                        radius=16,
-                        fill=card_fill,
-                    )
-                    draw.rounded_rectangle(
-                        [x + 16, card_y, x + 24, card_y + card_h],
-                        radius=4,
-                        fill=color,
-                    )
-                    draw.text(
-                        (x + 40, card_y + 18),
-                        ev_dt.strftime("%H:%M"),
-                        fill="#999999" if ended else color,
-                        font=fonts["time"],
-                    )
+            for ev, lines, card_h in cards:
+                color = self._get_color(ev.get("url", ""))
+                ev_dt = datetime.strptime(ev["time"], "%Y-%m-%d %H:%M:%S")
+                ended = ev_dt < now
+                draw.rounded_rectangle(
+                    [x + 14, card_y, x + col_w - 32, card_y + card_h],
+                    radius=16,
+                    fill="#F8F8F8" if ended else "#FFFFFF",
+                )
+                draw.rounded_rectangle(
+                    [x + 14, card_y, x + 23, card_y + card_h],
+                    radius=4,
+                    fill=color,
+                )
+                draw.text(
+                    (x + 38, card_y + 16),
+                    ev_dt.strftime("%H:%M"),
+                    fill="#999999" if ended else color,
+                    font=fonts["time"],
+                )
 
-                    meta = " · ".join(
-                        part for part in (
-                            ev.get("name") or "A-SOUL",
-                            ev.get("tag") or "日常",
-                        ) if part
-                    )
-                    if ended:
-                        meta += " · 已结束"
+                meta = " · ".join(
+                    part for part in (
+                        ev.get("name") or "A-SOUL",
+                        ev.get("tag") or "日常",
+                    ) if part
+                )
+                if ended:
+                    meta += " · 已结束"
+                draw.text(
+                    (x + 38, card_y + 52),
+                    meta,
+                    fill="#999999" if ended else color,
+                    font=fonts["meta"],
+                )
+                for line_index, line in enumerate(lines):
                     draw.text(
-                        (x + 142, card_y + 17),
-                        meta,
-                        fill="#999999" if ended else color,
-                        font=fonts["meta"],
+                        (x + 38, card_y + 83 + line_index * 33),
+                        line,
+                        fill="#555555",
+                        font=fonts["title"],
                     )
-                    for line_index, line in enumerate(lines):
-                        draw.text(
-                            (x + 142, card_y + 55 + line_index * 34),
-                            line,
-                            fill="#555555",
-                            font=fonts["title"],
-                        )
-                    card_y += card_h + 12
-
-            y += row_h + row_gap
+                card_y += card_h + 14
 
         path = os.path.join(self.data_dir, "schedule_weekly.png")
         return self._save_png(img, path)
