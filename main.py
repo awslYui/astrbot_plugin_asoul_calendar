@@ -1,15 +1,18 @@
+import asyncio
+import contextlib
 import httpx
 import json
 import os
 import re
 from PIL import Image as PILImage, ImageDraw, ImageFont
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api.all import *
 
 
-@register("zhijiang_calendar", "awslYui", "枝江日程表", "2.0")
+@register("zhijiang_calendar", "awslYui", "枝江日程表", "2.1.0")
 class CalendarPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -37,22 +40,27 @@ class CalendarPlugin(Star):
                 "已搜索路径: " + ", ".join(font_candidates)
             )
 
-        self._task_registered = False
+        self._fetch_lock = asyncio.Lock()
+        self._update_task = None
 
-    async def _ensure_task_registered(self):
-        """确保定时任务已注册（延迟注册，避免启动时事件循环未就绪）"""
-        if not self._task_registered:
-            try:
-                self.context.register_task("0 */6 * * *", self._auto_update)
-                self._task_registered = True
-            except Exception as e:
-                print(f"[zhijiang_calendar] 自动任务注册失败: {e}")
+    async def initialize(self):
+        """启动缓存更新循环。"""
+        self._update_task = asyncio.create_task(self._update_loop())
+
+    async def terminate(self):
+        """插件卸载时停止后台任务。"""
+        if self._update_task:
+            self._update_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._update_task
 
     # ==================== 自动更新 ====================
 
-    async def _auto_update(self):
-        """定时任务：拉取最新 ICS 数据并缓存"""
-        await self._fetch_and_cache()
+    async def _update_loop(self):
+        """启动后立即更新，之后每 6 小时更新一次。"""
+        while True:
+            await self._fetch_and_cache()
+            await asyncio.sleep(6 * 60 * 60)
 
     # ==================== ICS 解析 ====================
 
@@ -130,18 +138,52 @@ class CalendarPlugin(Star):
 
     # ==================== 网络与缓存 ====================
 
-    async def _fetch_and_cache(self) -> list | None:
-        """从网络获取 ICS 并缓存到本地 JSON"""
-        async with httpx.AsyncClient() as client:
+    @staticmethod
+    def _now_bj() -> datetime:
+        """返回无时区标记的北京时间，和缓存中的时间格式保持一致。"""
+        return datetime.now(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+
+    def _merge_with_cache(self, fresh_events: list) -> list:
+        """合并新日程，并保留本周已经结束、被上游移除的历史日程。"""
+        cached_events = self._load_cache() or []
+        now = self._now_bj()
+        week_start = (now - timedelta(days=now.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+
+        # 新数据是未来日程的权威来源；同 UID 的缓存会被新数据覆盖。
+        merged = {ev["uid"]: ev for ev in fresh_events if ev.get("uid")}
+        for ev in cached_events:
+            uid = ev.get("uid")
             try:
-                resp = await client.get(self.url, timeout=15)
-                events = self._parse_ics(resp.text)
-                with open(self.cache_path, 'w', encoding='utf-8') as f:
-                    json.dump(events, f, ensure_ascii=False, indent=2)
-                return events
-            except Exception as e:
-                print(f"[zhijiang_calendar] 获取日程失败: {e}")
-                return None
+                event_time = datetime.strptime(
+                    ev["time"], "%Y-%m-%d %H:%M:%S"
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+
+            if uid and week_start <= event_time < now and uid not in merged:
+                merged[uid] = ev
+
+        return sorted(merged.values(), key=lambda item: item["time"])
+
+    async def _fetch_and_cache(self) -> list | None:
+        """从网络获取 ICS，与本周历史缓存合并后原子写入本地 JSON。"""
+        async with self._fetch_lock:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                try:
+                    resp = await client.get(self.url, timeout=15)
+                    resp.raise_for_status()
+                    events = self._merge_with_cache(self._parse_ics(resp.text))
+
+                    temp_path = self.cache_path + ".tmp"
+                    with open(temp_path, "w", encoding="utf-8") as f:
+                        json.dump(events, f, ensure_ascii=False, indent=2)
+                    os.replace(temp_path, self.cache_path)
+                    return events
+                except Exception as e:
+                    print(f"[zhijiang_calendar] 获取日程失败: {e}")
+                    return None
 
     def _load_cache(self) -> list | None:
         """从本地 JSON 加载已缓存的事件"""
@@ -204,7 +246,7 @@ class CalendarPlugin(Star):
         if not events:
             return None
 
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = self._now_bj().replace(hour=0, minute=0, second=0, microsecond=0)
         week_start = today - timedelta(days=today.weekday())
 
         # 按星期几分组
@@ -218,7 +260,20 @@ class CalendarPlugin(Star):
         COL_W = 280
         MARGIN_TOP = 200
         img_w = COL_W * 7 + 100
-        img = PILImage.new('RGB', (img_w, 1200), color="#FFF5F7")
+
+        # 先按各列内容计算画布高度，避免日程较多时被固定高度截断。
+        def card_total_height(ev):
+            title_len = min(len(ev.get("title", "")), 28)
+            line_count = max(1, min(3, (title_len + 7) // 8))
+            return 160 + (line_count - 1) * 25
+
+        tallest_column = max(
+            (sum(card_total_height(ev) for ev in day_events)
+             for day_events in week_data.values()),
+            default=0,
+        )
+        img_h = max(MARGIN_TOP + 40 + tallest_column + 100, 600)
+        img = PILImage.new('RGB', (img_w, img_h), color="#FFF5F7")
         draw = ImageDraw.Draw(img)
 
         fonts = {
@@ -240,10 +295,22 @@ class CalendarPlugin(Star):
             is_today = curr_day.date() == today.date()
             clr = "#E799B0" if is_today else "#888888"
 
+            # 每天使用独立的浅色栏，今天增加主题色描边。
+            panel_fill = "#FFF9FA" if not is_today else "#FFF0F4"
+            panel_outline = "#E799B0" if is_today else "#F2DDE3"
+            draw.rounded_rectangle(
+                [x - 20, 150, x + COL_W - 30, img_h - 45],
+                radius=18,
+                fill=panel_fill,
+                outline=panel_outline,
+                width=3 if is_today else 1,
+            )
             draw.text((x, 170), day_names[i], fill=clr, font=fonts['date'])
             draw.text((x + 65, 170), curr_day.strftime('%m.%d'), fill=clr, font=fonts['date'])
 
             y_o = MARGIN_TOP + 40
+            if not week_data[i]:
+                draw.text((x + 55, y_o + 45), "暂无日程", fill="#BBBBBB", font=fonts['title'])
             for ev in week_data[i]:
                 y_o += self._draw_card(draw, img, x, y_o, ev, fonts)
             max_y = max(max_y, y_o)
@@ -258,7 +325,6 @@ class CalendarPlugin(Star):
     @filter.command("日程表")
     async def cmd_weekly(self, event: AstrMessageEvent):
         """发送本周枝江直播日程表图片"""
-        await self._ensure_task_registered()
         path = await self._render_weekly_image()
         if path:
             yield event.image_result(path)
