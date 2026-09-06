@@ -101,10 +101,8 @@ class CalendarPlugin(Star):
     @staticmethod
     def _is_jiaran_event(event: dict) -> bool:
         """判断日程是否为嘉然场，用于在图片中进行主视觉强调。"""
-        return (
-            "嘉然" in str(event.get("name", ""))
-            or "22637261" in str(event.get("url", ""))
-        )
+        # 仅高亮明确标注嘉然的个人场，避免共播场因使用同一房间号被误判。
+        return "嘉然" in str(event.get("name", ""))
 
     def _parse_ics(self, text: str) -> list:
         """解析 ICS 文本，返回按时间排序的事件列表"""
@@ -279,20 +277,20 @@ class CalendarPlugin(Star):
         gap = 22
         header_h = 500
         fonts = {
-            "header": ImageFont.truetype(self.font_path, 58),
-            "date": ImageFont.truetype(self.font_path, 30),
-            "time": ImageFont.truetype(self.font_path, 44),
-            "tag": ImageFont.truetype(self.font_path, 24),
-            "name": ImageFont.truetype(self.font_path, 32),
-            "title": ImageFont.truetype(self.font_path, 34),
+            "header": ImageFont.truetype(self.font_path, 64),
+            "date": ImageFont.truetype(self.font_path, 34),
+            "time": ImageFont.truetype(self.font_path, 48),
+            "tag": ImageFont.truetype(self.font_path, 26),
+            "name": ImageFont.truetype(self.font_path, 34),
+            "title": ImageFont.truetype(self.font_path, 36),
             "empty": ImageFont.truetype(self.font_path, 36),
-            "footer": ImageFont.truetype(self.font_path, 22),
+            "footer": ImageFont.truetype(self.font_path, 24),
         }
 
         card_specs = []
         for ev in today_events:
-            lines = self._wrap_text(ev.get("title", ""), 22, 3)
-            card_specs.append((ev, lines, 150 + len(lines) * 44))
+            lines = self._wrap_text(ev.get("title", ""), 19, 3)
+            card_specs.append((ev, lines, 154 + len(lines) * 46))
 
         content_h = sum(spec[2] for spec in card_specs)
         content_h += max(0, len(card_specs) - 1) * gap
@@ -306,22 +304,22 @@ class CalendarPlugin(Star):
         # 标题与本周图一致，直接融入背景，仅以轻描边保证可读。
         draw.text(
             (margin, 48), "今日直播", fill="#B92761",
-            font=fonts["header"], stroke_width=2, stroke_fill="#FFF8FA",
+            font=fonts["header"], stroke_width=3, stroke_fill="#FFF8FA",
         )
         date_text = (
             f"{today.month}月{today.day}日  "
             f"星期{weekdays[today.weekday()]}"
         )
         draw.text(
-            (margin, 126), date_text, fill="#4E5159",
-            font=fonts["date"], stroke_width=1, stroke_fill="#FFF8FA",
+            (margin, 132), date_text, fill="#3F4147",
+            font=fonts["date"], stroke_width=2, stroke_fill="#FFF8FA",
         )
         draw.text(
-            (img_w - 250, 58),
+            (margin, 188),
             f"更新 · {self._now_bj():%H:%M}",
             fill="#9B4165",
             font=fonts["footer"],
-            stroke_width=1,
+            stroke_width=2,
             stroke_fill="#FFF8FA",
         )
 
@@ -407,7 +405,7 @@ class CalendarPlugin(Star):
                 )
                 for line_index, line in enumerate(lines):
                     draw.text(
-                        (margin + 210, y + 92 + line_index * 44),
+                        (margin + 210, y + 96 + line_index * 46),
                         line,
                         fill="#3F4147",
                         font=fonts["title"],
@@ -438,22 +436,22 @@ class CalendarPlugin(Star):
         card_top = 820
         img_w = col_w * 7 + margin * 2
         fonts = {
-            "header": ImageFont.truetype(self.font_path, 58),
-            "range": ImageFont.truetype(self.font_path, 28),
-            "day": ImageFont.truetype(self.font_path, 30),
-            "time": ImageFont.truetype(self.font_path, 27),
-            "meta": ImageFont.truetype(self.font_path, 20),
-            "title": ImageFont.truetype(self.font_path, 26),
-            "empty": ImageFont.truetype(self.font_path, 23),
-            "footer": ImageFont.truetype(self.font_path, 20),
+            "header": ImageFont.truetype(self.font_path, 64),
+            "range": ImageFont.truetype(self.font_path, 32),
+            "day": ImageFont.truetype(self.font_path, 32),
+            "time": ImageFont.truetype(self.font_path, 29),
+            "meta": ImageFont.truetype(self.font_path, 21),
+            "title": ImageFont.truetype(self.font_path, 28),
+            "empty": ImageFont.truetype(self.font_path, 25),
+            "footer": ImageFont.truetype(self.font_path, 24),
         }
 
         card_specs = {}
         for day_index, day_events in week_data.items():
             cards = []
             for ev in day_events:
-                lines = self._wrap_text(ev.get("title", ""), 9, 3)
-                card_h = 88 + len(lines) * 33
+                lines = self._wrap_text(ev.get("title", ""), 7, 3)
+                card_h = 92 + len(lines) * 35
                 cards.append((ev, lines, card_h))
             card_specs[day_index] = cards
 
@@ -472,20 +470,20 @@ class CalendarPlugin(Star):
         # 标题直接融入背景，用轻描边保证清晰，避免厚重的悬浮白框。
         draw.text(
             (margin, 46), "枝江 · 本周日程", fill="#B92761",
-            font=fonts["header"], stroke_width=2, stroke_fill="#FFF8FA",
+            font=fonts["header"], stroke_width=3, stroke_fill="#FFF8FA",
         )
         week_end = week_start + timedelta(days=6)
         draw.text(
-            (margin, 128),
+            (margin, 138),
             f"{week_start:%m.%d} — {week_end:%m.%d}",
-            fill="#4E5159", font=fonts["range"],
-            stroke_width=1, stroke_fill="#FFF8FA",
+            fill="#3F4147", font=fonts["range"],
+            stroke_width=2, stroke_fill="#FFF8FA",
         )
         draw.text(
-            (img_w - 250, 58),
+            (margin, 194),
             f"更新 · {self._now_bj():%H:%M}",
             fill="#9B4165", font=fonts["footer"],
-            stroke_width=1, stroke_fill="#FFF8FA",
+            stroke_width=2, stroke_fill="#FFF8FA",
         )
 
         # 七天共享一块柔和的日历底座，避免七张独立白卡与插画割裂。
@@ -598,7 +596,7 @@ class CalendarPlugin(Star):
                 )
                 for line_index, line in enumerate(lines):
                     draw.text(
-                        (x + 38, card_y + 83 + line_index * 33),
+                        (x + 38, card_y + 87 + line_index * 35),
                         line,
                         fill="#3F4147",
                         font=fonts["title"],
