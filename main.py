@@ -98,6 +98,14 @@ class CalendarPlugin(Star):
                 return color
         return "#E799B0"
 
+    @staticmethod
+    def _is_jiaran_event(event: dict) -> bool:
+        """判断日程是否为嘉然场，用于在图片中进行主视觉强调。"""
+        return (
+            "嘉然" in str(event.get("name", ""))
+            or "22637261" in str(event.get("url", ""))
+        )
+
     def _parse_ics(self, text: str) -> list:
         """解析 ICS 文本，返回按时间排序的事件列表"""
         events = {}
@@ -341,19 +349,31 @@ class CalendarPlugin(Star):
                 color = self._get_color(ev.get("url", ""))
                 ev_dt = datetime.strptime(ev["time"], "%Y-%m-%d %H:%M:%S")
                 ended = ev_dt < now
-                card_fill = "#FAFAFA" if ended else "#FFFFFF"
+                is_jiaran = self._is_jiaran_event(ev)
+                card_fill = (
+                    (255, 224, 236, 232) if not ended else (250, 232, 238, 222)
+                ) if is_jiaran else (
+                    (248, 248, 248, 220) if ended else (255, 255, 255, 226)
+                )
                 draw.rounded_rectangle(
                     [margin, y, img_w - margin, y + card_h],
                     radius=26,
-                    fill=(248, 248, 248, 220) if ended else (255, 255, 255, 226),
-                    outline=(237, 196, 211, 205),
-                    width=2,
+                    fill=card_fill,
+                    outline=(220, 112, 153, 238) if is_jiaran else (237, 196, 211, 205),
+                    width=3 if is_jiaran else 2,
                 )
                 draw.rounded_rectangle(
-                    [margin, y, margin + 12, y + card_h],
+                    [margin, y, margin + (18 if is_jiaran else 12), y + card_h],
                     radius=6,
                     fill=color,
                 )
+                if is_jiaran:
+                    badge_box = [img_w - margin - 178, y + 28, img_w - margin - 28, y + 68]
+                    draw.rounded_rectangle(badge_box, radius=12, fill="#D96291")
+                    draw.text(
+                        (badge_box[0] + 12, badge_box[1] + 6),
+                        "嘉然直播", fill="#FFFFFF", font=fonts["tag"],
+                    )
 
                 time_color = "#646972" if ended else "#7E2949"
                 draw.text(
@@ -531,16 +551,30 @@ class CalendarPlugin(Star):
                 color = self._get_color(ev.get("url", ""))
                 ev_dt = datetime.strptime(ev["time"], "%Y-%m-%d %H:%M:%S")
                 ended = ev_dt < now
+                is_jiaran = self._is_jiaran_event(ev)
                 draw.rounded_rectangle(
                     [x + 14, card_y, x + col_w - 32, card_y + card_h],
                     radius=14,
-                    fill=(250, 250, 251, 220) if ended else (255, 255, 255, 226),
+                    fill=(
+                        (255, 224, 236, 232) if not ended else (250, 232, 238, 222)
+                    ) if is_jiaran else (
+                        (250, 250, 251, 220) if ended else (255, 255, 255, 226)
+                    ),
+                    outline=(220, 112, 153, 238) if is_jiaran else None,
+                    width=2 if is_jiaran else 1,
                 )
                 draw.rounded_rectangle(
-                    [x + 14, card_y, x + 23, card_y + card_h],
+                    [x + 14, card_y, x + (26 if is_jiaran else 23), card_y + card_h],
                     radius=4,
                     fill=color,
                 )
+                if is_jiaran:
+                    badge_box = [x + col_w - 116, card_y + 13, x + col_w - 42, card_y + 45]
+                    draw.rounded_rectangle(badge_box, radius=9, fill="#D96291")
+                    draw.text(
+                        (badge_box[0] + 12, badge_box[1] + 4),
+                        "嘉然", fill="#FFFFFF", font=fonts["meta"],
+                    )
                 draw.text(
                     (x + 38, card_y + 16),
                     ev_dt.strftime("%H:%M"),
